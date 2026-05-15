@@ -1,0 +1,38 @@
+# Algorithmic Pairs Trading — default configuration
+# All paths are relative to the project root unless otherwise noted.
+
+paths:
+  raw_data_dir: /Data6/db           # read-only source CSVs
+  interim_dir: data/interim          # raw-as-parquet, intermediate outputs
+  processed_dir: data/processed      # adjusted, cleaned, analysis-ready
+  pairs_dir: data/pairs              # pair-level outputs (spreads, z-scores)
+  plots_dir: plots                   # all PNGs, organised by phase
+  reports_dir: reports               # human-readable CSVs and summaries
+  logs_dir: logs                     # loguru output files
+
+universe:
+  # 756 ≈ 3 trading years; filters out newly listed / thinly traded names
+  min_history_days: 756
+
+screening:
+  # 0.85 is aggressive enough to pre-screen without losing good pairs;
+  # lowering to 0.70 roughly doubles pair count at the cost of weaker cointegration signal
+  correlation_threshold: 0.85
+  # Number of recent trading days used for correlation estimation (~2 years)
+  n_corr_days: 504
+  # Pairs with fewer overlapping observations are discarded before cointegration
+  min_overlap_days: 504
+
+cointegration:
+  # Standard 5 % significance level for ADF rejection of unit root
+  significance_level: 0.05
+  # Pairs with ADF p-value above this threshold are excluded from outputs
+  max_pvalue: 0.05
+
+spread:
+  # 252 ≈ 1 trading year; standard rolling window for z-score normalisation
+  rolling_window: 252
+
+parallel:
+  # -1 = use all available cores; set to a positive integer to limit
+  n_jobs: -1
