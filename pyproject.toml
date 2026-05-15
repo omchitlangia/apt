@@ -66,7 +66,11 @@ ignore = [
     "B008",  # do not perform function calls in default arguments
     "N803",  # argument name should be lowercase (statsmodels uses X)
     "N806",  # variable in function should be lowercase (same reason)
+    "N999",  # numbered script filenames (01_ingest_daily, etc.) are not importable modules
 ]
+
+[tool.ruff.lint.per-file-ignores]
+"scripts/*" = ["N999"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["apt"]
