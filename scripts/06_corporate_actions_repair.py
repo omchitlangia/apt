@@ -2,8 +2,9 @@
 """Script 06: Day-4C corporate-action repair.
 
 Reads ``data/processed/daily_clean.parquet`` (produced by Day-4A), classifies
-each surviving >40% discontinuity, applies ADJUST (back-adjustment) and TRIM
-(KEEP-guarded left + right cutoffs), re-applies the min-history filter, and
+each surviving >40% discontinuity, applies KEEP-guarded TRIM (left + right
+cutoffs — no ADJUST, since a clean price ratio can't distinguish a
+split/bonus from a special dividend), re-applies the min-history filter, and
 overwrites ``daily_clean.parquet`` in place. Day-4A is reproducible from its
 own script if Day-4C needs to be re-run from scratch.
 
@@ -81,12 +82,12 @@ def main() -> None:
     )
 
     # ------------------------------------------------------------------
-    # Apply ADJUST + TRIM (left/right, KEEP-guarded).
+    # Apply KEEP-guarded TRIMs (left/right). No ADJUSTs — a clean ratio
+    # cannot distinguish split/bonus from special dividend.
     # ------------------------------------------------------------------
     df, repair_summary = apply_repair(df, classified)
     logger.info(
-        "Repair: {} ADJUSTs, {} symbols left-trimmed, {} symbols right-trimmed",
-        repair_summary["n_adjust_events"],
+        "Repair: {} symbols left-trimmed, {} symbols right-trimmed",
         repair_summary["n_trim_left_symbols"],
         repair_summary["n_trim_right_symbols"],
     )
@@ -144,14 +145,7 @@ def main() -> None:
         print(f"      {r['category']:<16} {r['len']:>4}")
     print(f"    classification csv → {cls_path}")
     print()
-    print("  --- ADJUST events (back-adjust pre-ex-date OHLC) ---")
-    for a in repair_summary["adjusts"]:
-        print(
-            f"    {a['symbol']:<12} {a['ex_date']}  factor={a['adjust_factor']:.3f}  "
-            f"ret={a['ret']:+.4f}  (implied split={a['implied_split_ratio']:.3f}:1)"
-        )
-    print()
-    print("  --- TRIM events ---")
+    print("  --- TRIM events (no ADJUST — all single-name moves are trimmed) ---")
     print(f"    left-trim symbols  : {repair_summary['n_trim_left_symbols']}")
     print(f"    right-trim symbols : {repair_summary['n_trim_right_symbols']}")
     if repair_summary["trims_right"]:
