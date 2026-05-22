@@ -29,6 +29,13 @@ cleaning:
   validation_jump_threshold: 0.40
   # Start of the validation re-scan window (full lookback).
   validation_start: 2011-01-01
+  # Rule 7 (contiguity): gaps > this many calendar days split a symbol
+  # into segments; only the longest is kept. Normal NSE holiday clusters
+  # are < 7 days; 10 leaves headroom for the occasional long weekend.
+  contiguity_max_gap_days: 10
+  # Segments overlapping >= this date win over segments that don't (so a
+  # short backtest-relevant segment beats a long pre-backtest one).
+  contiguity_prefer_overlap_after: 2015-01-01
 
 screening:
   # 0.85 is aggressive enough to pre-screen without losing good pairs;

@@ -452,6 +452,173 @@ def apply_liquidity_filter(
 
 
 # ---------------------------------------------------------------------------
+# Rule 7 — Contiguity filter (applied between Rule 5 and Rule 6)
+# ---------------------------------------------------------------------------
+
+
+def apply_contiguity_filter(
+    df: pl.DataFrame,
+    *,
+    max_gap_days: int = 10,
+    prefer_overlap_after: date = date(2015, 1, 1),
+) -> tuple[pl.DataFrame, dict]:
+    """Rule 7 — keep only the longest contiguous segment per symbol.
+
+    A segment is a maximal run of consecutive rows for one symbol where
+    no two adjacent dates are more than ``max_gap_days`` calendar days
+    apart. After Rule 5's liquidity filter, ADV-dipping mid-history holes
+    can leave a symbol's data as several disjoint segments; rolling and
+    cointegration windows would silently span those holes.
+
+    Preference: segments with ``seg_end >= prefer_overlap_after`` win over
+    segments that don't (otherwise a long pre-backtest segment would beat
+    a short but backtest-relevant one). Within each class, longest wins,
+    with ``seg_end`` as the final tiebreaker.
+    """
+    n_before = df.height
+    if df.is_empty():
+        empty_report: dict = {
+            "rule": "contiguity",
+            "max_gap_days": max_gap_days,
+            "prefer_overlap_after": prefer_overlap_after,
+            "rows_before": 0,
+            "rows_after": 0,
+            "rows_dropped": 0,
+            "n_symbols_segmented": 0,
+            "n_segments_total": 0,
+            "n_segments_kept": 0,
+            "n_segments_dropped": 0,
+            "segment_detail": [],
+        }
+        return df, empty_report
+
+    enriched = (
+        df.sort(["symbol", "date"])
+        .with_columns(
+            pl.col("date")
+            .diff()
+            .over("symbol")
+            .dt.total_days()
+            .fill_null(0)
+            .alias("_gap_days")
+        )
+        .with_columns(
+            (pl.col("_gap_days") > max_gap_days)
+            .cast(pl.Int64)
+            .cum_sum()
+            .over("symbol")
+            .alias("_segment_id")
+        )
+    )
+
+    seg_stats = (
+        enriched.group_by(["symbol", "_segment_id"])
+        .agg(
+            [
+                pl.len().alias("n_rows"),
+                pl.col("date").min().alias("seg_start"),
+                pl.col("date").max().alias("seg_end"),
+                pl.col("_gap_days").max().alias("max_gap_within"),
+            ]
+        )
+        .with_columns(
+            (pl.col("seg_end") >= prefer_overlap_after).alias("overlaps_target")
+        )
+    )
+
+    # Priority: any 2015+-overlapping segment beats any non-overlapping;
+    # within each class, larger n_rows wins; final tiebreak on seg_end.
+    sorted_segs = seg_stats.sort(
+        ["symbol", "overlaps_target", "n_rows", "seg_end"],
+        descending=[False, True, True, True],
+    )
+    best = sorted_segs.unique(subset=["symbol"], keep="first").select(
+        ["symbol", "_segment_id"]
+    )
+
+    out = enriched.join(best, on=["symbol", "_segment_id"], how="inner").drop(
+        ["_gap_days", "_segment_id"]
+    )
+    n_after = out.height
+
+    n_segs_per_sym = (
+        seg_stats.group_by("symbol").len().rename({"len": "n_segments"})
+    )
+    segmented_syms = n_segs_per_sym.filter(pl.col("n_segments") > 1)
+
+    detail = (
+        seg_stats.join(
+            segmented_syms.select("symbol"), on="symbol", how="inner"
+        )
+        .join(
+            best.with_columns(pl.lit(True).alias("kept")),
+            on=["symbol", "_segment_id"],
+            how="left",
+        )
+        .with_columns(pl.col("kept").fill_null(False))
+        .sort(["symbol", "_segment_id"])
+        .rename({"_segment_id": "segment_id"})
+        .select(
+            [
+                "symbol",
+                "segment_id",
+                "n_rows",
+                "seg_start",
+                "seg_end",
+                "max_gap_within",
+                "overlaps_target",
+                "kept",
+            ]
+        )
+    )
+
+    logger.info(
+        "Rule 7 contiguity (gap > {}d): {}/{} symbols had multi-segment history; "
+        "{:,} rows dropped",
+        max_gap_days,
+        segmented_syms.height,
+        df["symbol"].n_unique(),
+        n_before - n_after,
+    )
+
+    return out, {
+        "rule": "contiguity",
+        "max_gap_days": max_gap_days,
+        "prefer_overlap_after": prefer_overlap_after,
+        "rows_before": n_before,
+        "rows_after": n_after,
+        "rows_dropped": n_before - n_after,
+        "n_symbols_segmented": segmented_syms.height,
+        "n_segments_total": seg_stats.height,
+        "n_segments_kept": best.height,
+        "n_segments_dropped": seg_stats.height - best.height,
+        "segment_detail": detail.to_dicts(),
+    }
+
+
+def max_internal_gap_per_symbol(df: pl.DataFrame) -> pl.DataFrame:
+    """Helper: ``symbol -> max calendar-day gap`` between consecutive rows.
+
+    Used post-Rule-7 to confirm every kept symbol's max gap is now ≤ the
+    threshold.
+    """
+    return (
+        df.sort(["symbol", "date"])
+        .with_columns(
+            pl.col("date")
+            .diff()
+            .over("symbol")
+            .dt.total_days()
+            .fill_null(0)
+            .alias("gap")
+        )
+        .group_by("symbol")
+        .agg(pl.col("gap").max().alias("max_internal_gap_days"))
+        .sort("max_internal_gap_days", descending=True)
+    )
+
+
+# ---------------------------------------------------------------------------
 # Rule 6 — Minimum history
 # ---------------------------------------------------------------------------
 

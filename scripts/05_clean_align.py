@@ -19,11 +19,13 @@ from apt.data.clean import (
     RESIDUAL_SPLITS,
     STRUCTURAL_EVENTS,
     apply_calendar_filter,
+    apply_contiguity_filter,
     apply_liquidity_filter,
     apply_min_history,
     apply_residual_splits,
     apply_structural_events,
     build_trading_calendar,
+    max_internal_gap_per_symbol,
     trim_phantom_history,
     validation_gate,
     verify_split_smoothness,
@@ -128,6 +130,15 @@ def main() -> None:
     )
 
     # ------------------------------------------------------------------
+    # Rule 7 — contiguity filter (between ADV floor and min-history)
+    # ------------------------------------------------------------------
+    df, r7 = apply_contiguity_filter(
+        df,
+        max_gap_days=settings.cleaning.contiguity_max_gap_days,
+        prefer_overlap_after=settings.cleaning.contiguity_prefer_overlap_after,
+    )
+
+    # ------------------------------------------------------------------
     # Rule 6 — minimum history
     # ------------------------------------------------------------------
     df, r6 = apply_min_history(df, min_days=settings.universe.min_history_days)
@@ -174,7 +185,7 @@ def main() -> None:
             "date_min": df["date"].min(),
             "date_max": df["date"].max(),
         },
-        "rules": [r1, r2, r3, r4, r5, r6],
+        "rules": [r1, r2, r3, r4, r5, r7, r6],
         "validation_gate": gate,
     }
     report_path = reports("daily_clean_report.json")
@@ -244,6 +255,23 @@ def main() -> None:
         sample = ", ".join(r5["symbols_dropped_entirely"][:15])
         more = "" if len(r5["symbols_dropped_entirely"]) <= 15 else " ..."
         print(f"      {sample}{more}")
+    print()
+    print(
+        f"  --- Rule 7 contiguity (gap > {r7['max_gap_days']} calendar days "
+        f"splits; prefer overlap >= {r7['prefer_overlap_after']}) ---"
+    )
+    print(f"    rows_dropped         : {r7['rows_dropped']:,}")
+    print(f"    symbols_segmented    : {r7['n_symbols_segmented']}")
+    print(
+        f"    segments_total/dropped: {r7['n_segments_total']} / "
+        f"{r7['n_segments_dropped']}"
+    )
+    # Sanity: every kept symbol's max gap must now be <= threshold
+    gap_summary = max_internal_gap_per_symbol(df)
+    print(
+        f"    post-Rule-7 max internal gap (any symbol): "
+        f"{int(gap_summary['max_internal_gap_days'].max())} days"
+    )
     print()
     print(
         f"  --- Rule 6 min-history (>= {settings.universe.min_history_days} days) ---"

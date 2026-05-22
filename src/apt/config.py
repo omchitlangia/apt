@@ -58,6 +58,13 @@ class CleaningConfig(BaseSettings):
     phantom_jump_threshold: float = 0.65
     validation_jump_threshold: float = 0.40
     validation_start: date = date(2011, 1, 1)
+    # Rule 7 — contiguity filter (added after the ADV filter, before the
+    # 756-day floor). Gaps > this many calendar days between consecutive
+    # rows split a symbol into segments; only the longest is kept.
+    contiguity_max_gap_days: int = 10
+    # Tiebreaker preference: segments overlapping >= this date win over
+    # segments that don't, regardless of length.
+    contiguity_prefer_overlap_after: date = date(2015, 1, 1)
 
     model_config = SettingsConfigDict(env_prefix="APT_CLEANING_")
 

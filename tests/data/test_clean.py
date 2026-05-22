@@ -12,11 +12,13 @@ from apt.data.clean import (
     RESIDUAL_SPLITS,
     STRUCTURAL_EVENTS,
     apply_calendar_filter,
+    apply_contiguity_filter,
     apply_liquidity_filter,
     apply_min_history,
     apply_residual_splits,
     apply_structural_events,
     build_trading_calendar,
+    max_internal_gap_per_symbol,
     trim_phantom_history,
     validation_gate,
     verify_split_smoothness,
@@ -236,6 +238,111 @@ def test_liquidity_drops_low_adv_rows():
     assert out["date"].max() == days[-1]
     assert report["rows_dropped"] > 0
     assert report["floor_inr"] == 1_000_000
+
+
+# ---------------------------------------------------------------------------
+# Rule 7 — contiguity
+# ---------------------------------------------------------------------------
+
+
+def test_contiguity_no_gaps_is_noop():
+    days = _weekdays(date(2020, 1, 1), 30)
+    df = _make_daily("X", days, [100.0] * 30)
+    out, report = apply_contiguity_filter(df, max_gap_days=10)
+    assert out.height == 30
+    assert report["n_symbols_segmented"] == 0
+    assert report["rows_dropped"] == 0
+
+
+def test_contiguity_normal_weekend_is_under_threshold():
+    """A Fri→Mon transition is 3 calendar days — under the default 10-day threshold."""
+    # First 5 weekdays (Mon-Fri), then next 5 weekdays (Mon-Fri) — 3-day weekend gap.
+    days = _weekdays(date(2020, 1, 6), 10)
+    df = _make_daily("X", days, [100.0] * 10)
+    out, report = apply_contiguity_filter(df, max_gap_days=10)
+    assert out.height == 10
+    assert report["n_segments_total"] == 1
+
+
+def test_contiguity_splits_on_large_gap_keeps_longest():
+    """20-day stretch, then 30-calendar-day gap, then 5-day stretch → keep 20."""
+    a = _weekdays(date(2020, 1, 1), 20)
+    b = _weekdays(date(2020, 4, 1), 5)  # ~70 calendar days after a's end
+    df = _make_daily("G", a + b, [100.0] * 25)
+    out, report = apply_contiguity_filter(
+        df, max_gap_days=10, prefer_overlap_after=date(1900, 1, 1)
+    )
+    assert out.height == 20
+    assert out["date"].min() == a[0]
+    assert out["date"].max() == a[-1]
+    assert report["n_symbols_segmented"] == 1
+    assert report["n_segments_total"] == 2
+    assert report["rows_dropped"] == 5
+
+
+def test_contiguity_prefers_2015_overlap_over_longer_pre_segment():
+    """A long pre-2015 segment loses to a shorter 2015+ segment."""
+    # 100-day pre-2015 segment
+    pre = _weekdays(date(2010, 1, 4), 100)
+    # 30-day 2015+ segment after a large gap
+    post = _weekdays(date(2016, 1, 4), 30)
+    df = _make_daily("J", pre + post, [10.0] * 130)
+    out, report = apply_contiguity_filter(
+        df, max_gap_days=10, prefer_overlap_after=date(2015, 1, 1)
+    )
+    # Should keep the shorter 2015+ segment
+    assert out.height == 30
+    assert out["date"].min() >= date(2015, 1, 1)
+    assert report["rows_dropped"] == 100
+
+
+def test_contiguity_falls_back_to_longest_when_no_2015_overlap():
+    """If no segment overlaps the preference date, longest wins."""
+    a = _weekdays(date(2008, 1, 1), 50)
+    b = _weekdays(date(2012, 1, 2), 20)
+    df = _make_daily("K", a + b, [10.0] * 70)
+    out, report = apply_contiguity_filter(
+        df, max_gap_days=10, prefer_overlap_after=date(2015, 1, 1)
+    )
+    assert out.height == 50
+    assert out["date"].max() <= a[-1]
+    assert report["rows_dropped"] == 20
+
+
+def test_contiguity_multi_symbol_independent_decisions():
+    """Symbol A is contiguous; symbol B is split. Filter affects only B."""
+    days_a = _weekdays(date(2018, 1, 1), 40)
+    a_df = _make_daily("A", days_a, [10.0] * 40)
+    pre_b = _weekdays(date(2018, 1, 1), 5)
+    post_b = _weekdays(date(2018, 4, 1), 30)
+    b_df = _make_daily("B", pre_b + post_b, [10.0] * 35)
+    df = pl.concat([a_df, b_df])
+    out, _ = apply_contiguity_filter(df, max_gap_days=10)
+    a_after = out.filter(pl.col("symbol") == "A").height
+    b_after = out.filter(pl.col("symbol") == "B").height
+    assert a_after == 40  # untouched
+    assert b_after == 30  # kept the longer post segment (also 2015+)
+
+
+def test_contiguity_post_filter_max_gap_at_or_below_threshold():
+    """Every kept symbol's max internal gap must be ≤ threshold."""
+    days_a = _weekdays(date(2020, 1, 1), 50)
+    a_df = _make_daily("A", days_a, [10.0] * 50)
+    # Symbol B with two segments
+    pre_b = _weekdays(date(2020, 1, 1), 5)
+    post_b = _weekdays(date(2020, 5, 1), 25)
+    b_df = _make_daily("B", pre_b + post_b, [10.0] * 30)
+    df = pl.concat([a_df, b_df])
+    out, _ = apply_contiguity_filter(df, max_gap_days=10)
+    gaps = max_internal_gap_per_symbol(out)
+    assert int(gaps["max_internal_gap_days"].max()) <= 10
+
+
+def test_contiguity_single_row_symbol_passes():
+    """Edge case: symbol with only one row should pass through unchanged."""
+    df = _make_daily("S", [date(2020, 6, 1)], [100.0])
+    out, _ = apply_contiguity_filter(df, max_gap_days=10)
+    assert out.height == 1
 
 
 # ---------------------------------------------------------------------------
