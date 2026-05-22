@@ -38,9 +38,10 @@ cleaning:
   contiguity_prefer_overlap_after: 2015-01-01
 
 screening:
-  # 0.85 is aggressive enough to pre-screen without losing good pairs;
-  # lowering to 0.70 roughly doubles pair count at the cost of weaker cointegration signal
-  correlation_threshold: 0.85
+  # LOCKED at 0.50 (Day 6). Sweep at 0.85 → 2 degenerate pairs (DVR + holdco);
+  # 0.50 yields ~hundreds of candidates, leaving the FDR-corrected cointegration
+  # stage room to make multiple-comparison inflation visible.
+  correlation_threshold: 0.50
   # Number of recent trading days used for correlation estimation (~2 years)
   n_corr_days: 504
   # Pairs with fewer overlapping observations are discarded before cointegration
@@ -49,8 +50,22 @@ screening:
 cointegration:
   # Standard 5 % significance level for ADF rejection of unit root
   significance_level: 0.05
-  # Pairs with ADF p-value above this threshold are excluded from outputs
+  # Raw ADF p-value cutoff (also used for the cross-window stability check)
   max_pvalue: 0.05
+  # Benjamini-Hochberg false-discovery rate (Day 6 multiple-comparisons correction)
+  fdr_alpha: 0.05
+  # Training window for fold-aware EG selection (~4 trading years)
+  n_train_days: 1008
+  # Hard minimum train length (~3 trading years); below this a fold is skipped
+  min_train_days: 756
+  # Tradeable mean-reversion band (in trading days) — half-life outside this
+  # interval is either noise (faster) or capital-inefficient (slower).
+  half_life_min_days: 5
+  half_life_max_days: 60
+  # Hurst exponent must be < hurst_max for the spread to be considered mean-reverting
+  hurst_max: 0.5
+  # Max lag (in trading days) used in the variance-of-differences Hurst estimator
+  hurst_max_lag: 100
 
 spread:
   # 252 ≈ 1 trading year; standard rolling window for z-score normalisation

@@ -97,9 +97,7 @@ def classify_survivors(
     return pl.DataFrame(out_rows)
 
 
-def apply_repair(
-    df: pl.DataFrame, classified: pl.DataFrame
-) -> tuple[pl.DataFrame, dict]:
+def apply_repair(df: pl.DataFrame, classified: pl.DataFrame) -> tuple[pl.DataFrame, dict]:
     """Apply KEEP-guarded left + right TRIMs to ``df``.
 
     Returns ``(df_out, summary)`` where ``summary`` reports the cutoff
@@ -173,9 +171,7 @@ def apply_repair(
     summary["n_trim_right_symbols"] = len(right_cutoffs)
 
     if left_cutoffs:
-        lt = pl.DataFrame(
-            {"symbol": list(left_cutoffs), "_left": list(left_cutoffs.values())}
-        )
+        lt = pl.DataFrame({"symbol": list(left_cutoffs), "_left": list(left_cutoffs.values())})
         df = (
             df.join(lt, on="symbol", how="left")
             .filter(pl.col("_left").is_null() | (pl.col("date") >= pl.col("_left")))
@@ -183,9 +179,7 @@ def apply_repair(
         )
 
     if right_cutoffs:
-        rt = pl.DataFrame(
-            {"symbol": list(right_cutoffs), "_right": list(right_cutoffs.values())}
-        )
+        rt = pl.DataFrame({"symbol": list(right_cutoffs), "_right": list(right_cutoffs.values())})
         df = (
             df.join(rt, on="symbol", how="left")
             .filter(pl.col("_right").is_null() | (pl.col("date") < pl.col("_right")))

@@ -176,9 +176,7 @@ def test_trim_phantom_keeps_excused_keep_event():
     closes = [100.0] * 5 + [20.0] + [21.0] * 4  # crash day 5 → -80% return
     df = _make_daily("YES", days, closes)
     keep = [("YES", days[5])]
-    out, report = trim_phantom_history(
-        df, threshold=0.65, splits=[], structural=[], keep=keep
-    )
+    out, report = trim_phantom_history(df, threshold=0.65, splits=[], structural=[], keep=keep)
     assert out.height == 10
     assert report["trimmed_symbols"] == []
     assert report["rows_dropped"] == 0
@@ -229,9 +227,7 @@ def test_liquidity_drops_low_adv_rows():
     # next 30 days vol=1_000_000 → ADV 100M.
     vol = [100] * 30 + [1_000_000] * 30
     df = _make_daily("XLIQ", days, [100.0] * 60, volume=vol)
-    out, report = apply_liquidity_filter(
-        df, min_adv_inr=1_000_000, window=20, min_periods=5
-    )
+    out, report = apply_liquidity_filter(df, min_adv_inr=1_000_000, window=20, min_periods=5)
     # First days mostly below floor, last days above. We expect at least
     # the later block to survive.
     assert out["date"].min() >= days[5]  # min_periods warmup

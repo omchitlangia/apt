@@ -100,13 +100,20 @@ def test_universe_defaults():
 
 
 def test_screening_defaults():
-    assert settings.screening.correlation_threshold == 0.85
+    assert settings.screening.correlation_threshold == 0.50
     assert settings.screening.n_corr_days == 504
     assert settings.screening.min_overlap_days == 504
 
 
 def test_cointegration_defaults():
     assert settings.cointegration.max_pvalue == 0.05
+    assert settings.cointegration.fdr_alpha == 0.05
+    assert settings.cointegration.n_train_days == 1008
+    assert settings.cointegration.min_train_days == 756
+    assert settings.cointegration.half_life_min_days == 5
+    assert settings.cointegration.half_life_max_days == 60
+    assert settings.cointegration.hurst_max == 0.5
+    assert settings.cointegration.hurst_max_lag == 100
 
 
 def test_spread_defaults():

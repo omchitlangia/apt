@@ -82,12 +82,12 @@ def _national_holidays_in_range(start: date, end: date) -> set[date]:
     for yr in range(start.year, end.year + 1):
         out.update(
             {
-                date(yr, 1, 1),   # New Year
+                date(yr, 1, 1),  # New Year
                 date(yr, 1, 26),  # Republic Day
-                date(yr, 5, 1),   # Labour Day
+                date(yr, 5, 1),  # Labour Day
                 date(yr, 8, 15),  # Independence Day
                 date(yr, 10, 2),  # Gandhi Jayanti
-                date(yr, 12, 25), # Christmas
+                date(yr, 12, 25),  # Christmas
             }
         )
     return out
@@ -112,18 +112,12 @@ def build_trading_calendar(
     national = _national_holidays_in_range(start, end)
     base = weekdays - national
 
-    presence = (
-        daily.group_by("date")
-        .len()
-        .filter(pl.col("len") >= min_symbols_per_day)
-    )
+    presence = daily.group_by("date").len().filter(pl.col("len") >= min_symbols_per_day)
     present = set(presence["date"].to_list())
     return sorted(base & present)
 
 
-def apply_calendar_filter(
-    df: pl.DataFrame, calendar: Iterable[date]
-) -> tuple[pl.DataFrame, dict]:
+def apply_calendar_filter(df: pl.DataFrame, calendar: Iterable[date]) -> tuple[pl.DataFrame, dict]:
     """Rule 1 — keep only rows whose date is in ``calendar``."""
     cal_list = list(calendar)
     cal_set = set(cal_list)
@@ -131,9 +125,7 @@ def apply_calendar_filter(
     n_before = df.height
     weekend_mask = pl.col("date").dt.weekday() > 5
     weekend_rows = df.filter(weekend_mask).height
-    jan1_rows = df.filter(
-        (pl.col("date").dt.month() == 1) & (pl.col("date").dt.day() == 1)
-    ).height
+    jan1_rows = df.filter((pl.col("date").dt.month() == 1) & (pl.col("date").dt.day() == 1)).height
 
     out = df.filter(pl.col("date").is_in(cal_list))
     n_after = out.height
@@ -208,10 +200,7 @@ def apply_residual_splits(
     )
 
     out = out.with_columns(
-        [
-            (pl.col(c) * pl.col("multiplier")).alias(c)
-            for c in ("open", "high", "low", "close")
-        ]
+        [(pl.col(c) * pl.col("multiplier")).alias(c) for c in ("open", "high", "low", "close")]
     ).drop("multiplier")
 
     # Per-split adjustment counts: rows with date < ex_date for the symbol.
@@ -223,8 +212,9 @@ def apply_residual_splits(
         )
 
     total_adjusted = sum(c["rows_adjusted"] for c in counts_by_split)
-    logger.info("Rule 2 residual splits — {} adjusted rows across {} splits",
-                total_adjusted, len(splits))
+    logger.info(
+        "Rule 2 residual splits — {} adjusted rows across {} splits", total_adjusted, len(splits)
+    )
     return out, {
         "rule": "residual_splits",
         "splits": counts_by_split,
@@ -243,29 +233,35 @@ def verify_split_smoothness(
     Used after :func:`apply_residual_splits` to verify each patched ex-date is
     now within ±tolerance — i.e. inside normal daily-move bounds.
     """
-    rows = (
-        df.sort(["symbol", "date"])
-        .with_columns(
-            (pl.col("close") / pl.col("close").shift(1).over("symbol") - 1).alias("ret")
-        )
+    rows = df.sort(["symbol", "date"]).with_columns(
+        (pl.col("close") / pl.col("close").shift(1).over("symbol") - 1).alias("ret")
     )
     out = []
     for sym, ex_d, ratio in splits:
         r = rows.filter((pl.col("symbol") == sym) & (pl.col("date") == ex_d))
         if r.is_empty():
-            out.append({"symbol": sym, "ex_date": ex_d, "split_ratio": ratio,
-                        "post_patch_return": None, "smooth": False,
-                        "note": "ex-date missing from frame"})
+            out.append(
+                {
+                    "symbol": sym,
+                    "ex_date": ex_d,
+                    "split_ratio": ratio,
+                    "post_patch_return": None,
+                    "smooth": False,
+                    "note": "ex-date missing from frame",
+                }
+            )
             continue
         ret_val = r["ret"][0]
-        out.append({
-            "symbol": sym,
-            "ex_date": ex_d,
-            "split_ratio": ratio,
-            "post_patch_return": ret_val,
-            "smooth": ret_val is not None and abs(ret_val) < tolerance,
-            "note": "" if ret_val is not None and abs(ret_val) < tolerance else "outside bound",
-        })
+        out.append(
+            {
+                "symbol": sym,
+                "ex_date": ex_d,
+                "split_ratio": ratio,
+                "post_patch_return": ret_val,
+                "smooth": ret_val is not None and abs(ret_val) < tolerance,
+                "note": "" if ret_val is not None and abs(ret_val) < tolerance else "outside bound",
+            }
+        )
     return out
 
 
@@ -307,14 +303,10 @@ def trim_phantom_history(
     enriched = df.sort(["symbol", "date"]).with_columns(
         (pl.col("close") / pl.col("close").shift(1).over("symbol") - 1).alias("ret")
     )
-    big_moves = enriched.filter(pl.col("ret").abs() > threshold).select(
-        ["symbol", "date", "ret"]
-    )
+    big_moves = enriched.filter(pl.col("ret").abs() > threshold).select(["symbol", "date", "ret"])
 
     unexplained_rows = [
-        r
-        for r in big_moves.to_dicts()
-        if r["date"] not in excused.get(r["symbol"], set())
+        r for r in big_moves.to_dicts() if r["date"] not in excused.get(r["symbol"], set())
     ]
     if not unexplained_rows:
         logger.info("Rule 3 phantom-trim — no unexplained big moves found")
@@ -332,17 +324,13 @@ def trim_phantom_history(
         if prev is None or r["date"] > prev:
             trims[r["symbol"]] = r["date"]
 
-    trims_df = pl.DataFrame(
-        {"symbol": list(trims.keys()), "seam_date": list(trims.values())}
-    )
+    trims_df = pl.DataFrame({"symbol": list(trims.keys()), "seam_date": list(trims.values())})
     out = df.join(trims_df, on="symbol", how="left").filter(
         pl.col("seam_date").is_null() | (pl.col("date") >= pl.col("seam_date"))
     )
 
     rows_dropped = df.height - out.height
-    trim_report = [
-        {"symbol": s, "new_start_date": d} for s, d in sorted(trims.items())
-    ]
+    trim_report = [{"symbol": s, "new_start_date": d} for s, d in sorted(trims.items())]
     logger.info(
         "Rule 3 phantom-trim — trimmed {} symbol(s); {} rows dropped",
         len(trim_report),
@@ -422,8 +410,7 @@ def apply_liquidity_filter(
         )
     )
     kept = enriched.filter(
-        pl.col("adv_rolling_median").is_not_null()
-        & (pl.col("adv_rolling_median") >= min_adv_inr)
+        pl.col("adv_rolling_median").is_not_null() & (pl.col("adv_rolling_median") >= min_adv_inr)
     ).drop(["adv", "adv_rolling_median"])
 
     n_after = kept.height
@@ -432,8 +419,7 @@ def apply_liquidity_filter(
     pre_syms = set(df["symbol"].unique().to_list())
     lost_syms = sorted(pre_syms - surviving_syms)
     logger.info(
-        "Rule 5 liquidity (floor ₹{:,.0f}) — kept {:,}/{:,} rows; "
-        "{} symbols lost entirely",
+        "Rule 5 liquidity (floor ₹{:,.0f}) — kept {:,}/{:,} rows; {} symbols lost entirely",
         min_adv_inr,
         n_after,
         n_before,
@@ -495,12 +481,7 @@ def apply_contiguity_filter(
     enriched = (
         df.sort(["symbol", "date"])
         .with_columns(
-            pl.col("date")
-            .diff()
-            .over("symbol")
-            .dt.total_days()
-            .fill_null(0)
-            .alias("_gap_days")
+            pl.col("date").diff().over("symbol").dt.total_days().fill_null(0).alias("_gap_days")
         )
         .with_columns(
             (pl.col("_gap_days") > max_gap_days)
@@ -521,9 +502,7 @@ def apply_contiguity_filter(
                 pl.col("_gap_days").max().alias("max_gap_within"),
             ]
         )
-        .with_columns(
-            (pl.col("seg_end") >= prefer_overlap_after).alias("overlaps_target")
-        )
+        .with_columns((pl.col("seg_end") >= prefer_overlap_after).alias("overlaps_target"))
     )
 
     # Priority: any 2015+-overlapping segment beats any non-overlapping;
@@ -532,24 +511,18 @@ def apply_contiguity_filter(
         ["symbol", "overlaps_target", "n_rows", "seg_end"],
         descending=[False, True, True, True],
     )
-    best = sorted_segs.unique(subset=["symbol"], keep="first").select(
-        ["symbol", "_segment_id"]
-    )
+    best = sorted_segs.unique(subset=["symbol"], keep="first").select(["symbol", "_segment_id"])
 
     out = enriched.join(best, on=["symbol", "_segment_id"], how="inner").drop(
         ["_gap_days", "_segment_id"]
     )
     n_after = out.height
 
-    n_segs_per_sym = (
-        seg_stats.group_by("symbol").len().rename({"len": "n_segments"})
-    )
+    n_segs_per_sym = seg_stats.group_by("symbol").len().rename({"len": "n_segments"})
     segmented_syms = n_segs_per_sym.filter(pl.col("n_segments") > 1)
 
     detail = (
-        seg_stats.join(
-            segmented_syms.select("symbol"), on="symbol", how="inner"
-        )
+        seg_stats.join(segmented_syms.select("symbol"), on="symbol", how="inner")
         .join(
             best.with_columns(pl.lit(True).alias("kept")),
             on=["symbol", "_segment_id"],
@@ -573,8 +546,7 @@ def apply_contiguity_filter(
     )
 
     logger.info(
-        "Rule 7 contiguity (gap > {}d): {}/{} symbols had multi-segment history; "
-        "{:,} rows dropped",
+        "Rule 7 contiguity (gap > {}d): {}/{} symbols had multi-segment history; {:,} rows dropped",
         max_gap_days,
         segmented_syms.height,
         df["symbol"].n_unique(),
@@ -605,12 +577,7 @@ def max_internal_gap_per_symbol(df: pl.DataFrame) -> pl.DataFrame:
     return (
         df.sort(["symbol", "date"])
         .with_columns(
-            pl.col("date")
-            .diff()
-            .over("symbol")
-            .dt.total_days()
-            .fill_null(0)
-            .alias("gap")
+            pl.col("date").diff().over("symbol").dt.total_days().fill_null(0).alias("gap")
         )
         .group_by("symbol")
         .agg(pl.col("gap").max().alias("max_internal_gap_days"))
@@ -623,9 +590,7 @@ def max_internal_gap_per_symbol(df: pl.DataFrame) -> pl.DataFrame:
 # ---------------------------------------------------------------------------
 
 
-def apply_min_history(
-    df: pl.DataFrame, *, min_days: int = 756
-) -> tuple[pl.DataFrame, dict]:
+def apply_min_history(df: pl.DataFrame, *, min_days: int = 756) -> tuple[pl.DataFrame, dict]:
     """Rule 6 — drop symbols with fewer than ``min_days`` cleaned rows."""
     counts = df.group_by("symbol").len().rename({"len": "n_days"})
     keepers = counts.filter(pl.col("n_days") >= min_days).select("symbol")
@@ -676,9 +641,7 @@ def validation_gate(
 
     scan = (
         df.sort(["symbol", "date"])
-        .with_columns(
-            (pl.col("close") / pl.col("close").shift(1).over("symbol") - 1).alias("ret")
-        )
+        .with_columns((pl.col("close") / pl.col("close").shift(1).over("symbol") - 1).alias("ret"))
         .filter((pl.col("date") >= start_date) & (pl.col("ret").abs() > threshold))
         .select(["symbol", "date", "close", "ret"])
     )

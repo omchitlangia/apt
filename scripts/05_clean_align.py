@@ -52,9 +52,7 @@ def main() -> None:
     coverage_path = reports("corporate_actions_coverage.csv")
 
     if not src_path.exists():
-        raise FileNotFoundError(
-            f"{src_path} missing — run scripts/04_corporate_actions.py first"
-        )
+        raise FileNotFoundError(f"{src_path} missing — run scripts/04_corporate_actions.py first")
     df = pl.read_parquet(src_path)
     logger.info(
         "Loaded daily_adjusted: {:,} rows, {} symbols, {} → {}",
@@ -81,9 +79,7 @@ def main() -> None:
     if coverage_path.exists():
         cov = pl.read_csv(coverage_path)
         yf_failed = set(cov.filter(pl.col("status") == "failed")["symbol"].to_list())
-    logger.info(
-        "Loaded {} action rows; {} yfinance-blind symbols", actions.height, len(yf_failed)
-    )
+    logger.info("Loaded {} action rows; {} yfinance-blind symbols", actions.height, len(yf_failed))
 
     initial_rows = df.height
     initial_syms = df["symbol"].n_unique()
@@ -91,9 +87,7 @@ def main() -> None:
     # ------------------------------------------------------------------
     # Rule 1 — trading-calendar filter
     # ------------------------------------------------------------------
-    calendar = build_trading_calendar(
-        df, start=date(2003, 1, 1), end=date(2021, 6, 30)
-    )
+    calendar = build_trading_calendar(df, start=date(2003, 1, 1), end=date(2021, 6, 30))
     df, r1 = apply_calendar_filter(df, calendar)
 
     # ------------------------------------------------------------------
@@ -148,8 +142,12 @@ def main() -> None:
     # ------------------------------------------------------------------
     out_path = processed("daily_clean.parquet")
     df.sort(["symbol", "date"]).write_parquet(out_path, use_pyarrow=True)
-    logger.info("Wrote daily_clean: {:,} rows, {} symbols → {}",
-                df.height, df["symbol"].n_unique(), out_path)
+    logger.info(
+        "Wrote daily_clean: {:,} rows, {} symbols → {}",
+        df.height,
+        df["symbol"].n_unique(),
+        out_path,
+    )
 
     # ------------------------------------------------------------------
     # Validation gate
@@ -213,9 +211,7 @@ def main() -> None:
     print(f"    rows_dropped     : {r1['rows_dropped']:,}")
     print(f"    weekend_dropped  : {r1['weekend_rows_dropped']:,}")
     print(f"    jan1_dropped     : {r1['jan1_rows_dropped']:,}")
-    print(
-        f"    calendar         : {r1['calendar_days']:,} days  (~{r1['days_per_year_avg']}/yr)"
-    )
+    print(f"    calendar         : {r1['calendar_days']:,} days  (~{r1['days_per_year_avg']}/yr)")
     print()
     print("  --- Rule 2 residual-split patch ---")
     print(f"    total_rows_adjusted: {r2['rows_adjusted']:,}")
@@ -233,8 +229,7 @@ def main() -> None:
             f"smooth={s['smooth']} {s['note']}"
         )
     print()
-    print("  --- Rule 3 phantom-trim (threshold "
-          f"{settings.cleaning.phantom_jump_threshold}) ---")
+    print(f"  --- Rule 3 phantom-trim (threshold {settings.cleaning.phantom_jump_threshold}) ---")
     print(f"    rows_dropped    : {r3['rows_dropped']:,}")
     print(f"    symbols_trimmed : {len(r3['trimmed_symbols'])}")
     for t in r3["trimmed_symbols"]:
@@ -245,10 +240,7 @@ def main() -> None:
     for e in r4["events"]:
         print(f"      {e['symbol']:<12} event = {e['event_date']}  (keep date > event)")
     print()
-    print(
-        f"  --- Rule 5 liquidity floor "
-        f"(ADV >= ₹{settings.liquidity.min_adv_inr:,.0f}) ---"
-    )
+    print(f"  --- Rule 5 liquidity floor (ADV >= ₹{settings.liquidity.min_adv_inr:,.0f}) ---")
     print(f"    rows_dropped   : {r5['rows_dropped']:,}")
     print(f"    symbols_lost   : {len(r5['symbols_dropped_entirely'])}")
     if r5["symbols_dropped_entirely"]:
@@ -262,10 +254,7 @@ def main() -> None:
     )
     print(f"    rows_dropped         : {r7['rows_dropped']:,}")
     print(f"    symbols_segmented    : {r7['n_symbols_segmented']}")
-    print(
-        f"    segments_total/dropped: {r7['n_segments_total']} / "
-        f"{r7['n_segments_dropped']}"
-    )
+    print(f"    segments_total/dropped: {r7['n_segments_total']} / {r7['n_segments_dropped']}")
     # Sanity: every kept symbol's max gap must now be <= threshold
     gap_summary = max_internal_gap_per_symbol(df)
     print(
@@ -273,15 +262,11 @@ def main() -> None:
         f"{int(gap_summary['max_internal_gap_days'].max())} days"
     )
     print()
-    print(
-        f"  --- Rule 6 min-history (>= {settings.universe.min_history_days} days) ---"
-    )
+    print(f"  --- Rule 6 min-history (>= {settings.universe.min_history_days} days) ---")
     print(f"    symbols_kept    : {r6['symbols_kept']}")
     print(f"    symbols_dropped : {len(r6['symbols_dropped'])}")
     if r6["symbols_dropped"]:
-        sample = ", ".join(
-            f"{d['symbol']}({d['n_days']})" for d in r6["symbols_dropped"][:15]
-        )
+        sample = ", ".join(f"{d['symbol']}({d['n_days']})" for d in r6["symbols_dropped"][:15])
         more = "" if len(r6["symbols_dropped"]) <= 15 else " ..."
         print(f"      {sample}{more}")
     print()
@@ -292,10 +277,14 @@ def main() -> None:
     )
     print(f"    big moves              : {gate['n_big_moves']}")
     print(f"    survivors              : {gate['n_survivors']}")
-    print(f"      >100% magnitude      : {gate['survivors_over_100pct']}"
-          "   (almost certainly unrecorded corporate actions)")
-    print(f"      40-100% magnitude    : {gate['survivors_40_to_100pct']}"
-          "   (mix of real extreme moves + unrecorded CA)")
+    print(
+        f"      >100% magnitude      : {gate['survivors_over_100pct']}"
+        "   (almost certainly unrecorded corporate actions)"
+    )
+    print(
+        f"      40-100% magnitude    : {gate['survivors_40_to_100pct']}"
+        "   (mix of real extreme moves + unrecorded CA)"
+    )
     if survivors:
         top = sorted(survivors, key=lambda r: abs(r["ret"]), reverse=True)[:25]
         print("    top 25 by magnitude:")

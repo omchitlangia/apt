@@ -70,7 +70,7 @@ class CleaningConfig(BaseSettings):
 
 
 class ScreeningConfig(BaseSettings):
-    correlation_threshold: float = 0.85
+    correlation_threshold: float = 0.50
     n_corr_days: int = 504
     min_overlap_days: int = 504
 
@@ -80,6 +80,13 @@ class ScreeningConfig(BaseSettings):
 class CointegrationConfig(BaseSettings):
     significance_level: float = 0.05
     max_pvalue: float = 0.05
+    fdr_alpha: float = 0.05
+    n_train_days: int = 1008
+    min_train_days: int = 756
+    half_life_min_days: int = 5
+    half_life_max_days: int = 60
+    hurst_max: float = 0.5
+    hurst_max_lag: int = 100
 
     model_config = SettingsConfigDict(env_prefix="APT_COINTEGRATION_")
 

@@ -1,12 +1,12 @@
 """Pair-level plots (correlation heatmaps, spread series, etc.).
 
-Day-5 deliverable: a sector-clustered correlation heatmap visualising the
-single-window screen output. Future days (cointegration, spread plots) add
-to this module.
+Day-5 added the sector-clustered correlation heatmap; Day-6 adds a spread
+diagnostic plot used to eyeball the most promising cointegrated pairs.
 """
 
 from __future__ import annotations
 
+from datetime import date
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -41,12 +41,8 @@ def plot_sector_clustered_correlation(
         plt.close(fig)
         return {"n_symbols": 0, "n_sectors": 0}
 
-    sym_to_sector = dict(
-        zip(sectors["symbol"], sectors["industry"], strict=True)
-    )
-    decorated = [
-        (sym_to_sector.get(s, "UNKNOWN"), s) for s in symbols
-    ]
+    sym_to_sector = dict(zip(sectors["symbol"], sectors["industry"], strict=True))
+    decorated = [(sym_to_sector.get(s, "UNKNOWN"), s) for s in symbols]
     # Sort by (sector, symbol)
     order = sorted(range(len(symbols)), key=lambda i: decorated[i])
     perm = np.array(order)
@@ -86,9 +82,7 @@ def plot_sector_clustered_correlation(
 
     # Label sectors along the y-axis at their midpoints
     ax.set_yticks([m for m, _ in midpoints])
-    ax.set_yticklabels(
-        [s if s else "" for _, s in midpoints], fontsize=7
-    )
+    ax.set_yticklabels([s if s else "" for _, s in midpoints], fontsize=7)
     ax.tick_params(axis="y", length=0, pad=2)
 
     cbar = fig.colorbar(im, ax=ax, shrink=0.7)
@@ -101,4 +95,84 @@ def plot_sector_clustered_correlation(
     return {
         "n_symbols": len(symbols),
         "n_sectors": len(set(ordered_secs)),
+    }
+
+
+def plot_pair_spread(
+    daily: pl.DataFrame,
+    *,
+    y_sym: str,
+    x_sym: str,
+    alpha: float,
+    beta: float,
+    start: date,
+    end: date,
+    out_path: Path,
+    bands: tuple[float, ...] = (1.0, 2.0),
+    sector: str | None = None,
+    extra_title: str | None = None,
+) -> dict:
+    """Plot the OLS residual spread for one cointegrated pair to ``out_path``.
+
+    Spread is computed as ``log(close[y_sym]) - alpha - beta * log(close[x_sym])``
+    over ``[start, end]``, aligned by date. ±k·σ bands (with σ the in-window
+    standard deviation of the spread) are drawn for each ``k`` in ``bands``.
+    """
+    apply_style()
+
+    win = (
+        daily.filter(
+            pl.col("symbol").is_in([y_sym, x_sym])
+            & (pl.col("date") >= start)
+            & (pl.col("date") <= end)
+        )
+        .select(["symbol", "date", "close"])
+        .with_columns(pl.col("close").log().alias("log_close"))
+    )
+    wide = win.pivot(index="date", on="symbol", values="log_close").sort("date").drop_nulls()
+    if wide.is_empty() or y_sym not in wide.columns or x_sym not in wide.columns:
+        fig, ax = plt.subplots(figsize=(9, 4))
+        ax.text(0.5, 0.5, f"no data for {y_sym}/{x_sym}", ha="center", va="center")
+        ax.axis("off")
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        fig.savefig(out_path)
+        plt.close(fig)
+        return {"y_sym": y_sym, "x_sym": x_sym, "n_obs": 0}
+
+    dates = wide["date"].to_list()
+    y = wide[y_sym].to_numpy()
+    x = wide[x_sym].to_numpy()
+    spread = y - alpha - beta * x
+    mu = float(np.mean(spread))
+    sigma = float(np.std(spread))
+
+    title_main = f"Spread  {y_sym} = α + β·{x_sym} + ε   (β={beta:+.4f})"
+    if sector:
+        title_main = f"{title_main}   [{sector}]"
+    if extra_title:
+        title_main = f"{title_main}\n{extra_title}"
+
+    fig, ax = plt.subplots(figsize=(11, 4.5))
+    ax.plot(dates, spread, lw=0.9, color="#2E86AB", label="spread")
+    ax.axhline(mu, color="#7E8083", lw=0.8, ls="--", label=f"mean = {mu:+.4f}")
+    band_colors = ["#3B8E5C", "#C73E1D", "#A23B72", "#6B5B95"]
+    for i, k in enumerate(bands):
+        c = band_colors[i % len(band_colors)]
+        ax.axhline(mu + k * sigma, color=c, lw=0.7, ls=":", label=f"±{k:g}σ")
+        ax.axhline(mu - k * sigma, color=c, lw=0.7, ls=":")
+    ax.set_xlim(dates[0], dates[-1])
+    ax.set_title(title_main)
+    ax.set_xlabel("date")
+    ax.set_ylabel("residual spread (log scale)")
+    ax.legend(loc="upper left", ncol=2)
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out_path)
+    plt.close(fig)
+    return {
+        "y_sym": y_sym,
+        "x_sym": x_sym,
+        "n_obs": len(spread),
+        "mean": mu,
+        "sigma": sigma,
     }

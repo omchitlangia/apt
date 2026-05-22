@@ -34,9 +34,7 @@ from apt.utils.paths import ensure_dirs, interim, processed, reports
 
 
 def main() -> None:
-    setup_logging(
-        log_file=settings.paths.logs_dir / "06_corporate_actions_repair.log"
-    )
+    setup_logging(log_file=settings.paths.logs_dir / "06_corporate_actions_repair.log")
     ensure_dirs()
 
     src = processed("daily_clean.parquet")
@@ -48,9 +46,7 @@ def main() -> None:
 
     actions = pl.read_parquet(interim("corporate_actions.parquet"))
     cov_csv = pl.read_csv(reports("corporate_actions_coverage.csv"))
-    yf_failed: set[str] = set(
-        cov_csv.filter(pl.col("status") == "failed")["symbol"].to_list()
-    )
+    yf_failed: set[str] = set(cov_csv.filter(pl.col("status") == "failed")["symbol"].to_list())
 
     # ------------------------------------------------------------------
     # Recompute the Day-4A baseline survivors (no COVID excuse yet).
@@ -74,12 +70,10 @@ def main() -> None:
     # ------------------------------------------------------------------
     classified = classify_survivors(survivors)
     cls_path = reports("ca_repair_classification.csv")
-    classified.with_columns(
-        pl.col("symbol").is_in(yf_failed).alias("yfinance_blind")
-    ).sort(["category", "symbol", "date"]).write_csv(cls_path)
-    cat_counts = (
-        classified.group_by("category").len().sort("len", descending=True).to_dicts()
-    )
+    classified.with_columns(pl.col("symbol").is_in(yf_failed).alias("yfinance_blind")).sort(
+        ["category", "symbol", "date"]
+    ).write_csv(cls_path)
+    cat_counts = classified.group_by("category").len().sort("len", descending=True).to_dicts()
 
     # ------------------------------------------------------------------
     # Apply KEEP-guarded TRIMs (left/right). No ADJUSTs — a clean ratio
@@ -131,9 +125,7 @@ def main() -> None:
     )
 
     print("\n=== 06_corporate_actions_repair complete ===")
-    print(
-        f"  Input  : {init_rows:>10,} rows × {init_syms} symbols  (daily_clean before repair)"
-    )
+    print(f"  Input  : {init_rows:>10,} rows × {init_syms} symbols  (daily_clean before repair)")
     print(
         f"  Output : {df.height:>10,} rows × {df['symbol'].n_unique()} symbols  "
         f"(daily_clean after repair)"
@@ -155,14 +147,10 @@ def main() -> None:
                 f"({t['n_trim_events']} event)"
             )
     print()
-    print(
-        f"  --- Min-history re-apply (>= {settings.universe.min_history_days} days) ---"
-    )
+    print(f"  --- Min-history re-apply (>= {settings.universe.min_history_days} days) ---")
     print(f"    newly dropped : {newly_dropped_minhist}")
     if mh_report["symbols_dropped"]:
-        names = [
-            f"{d['symbol']}({d['n_days']})" for d in mh_report["symbols_dropped"][:20]
-        ]
+        names = [f"{d['symbol']}({d['n_days']})" for d in mh_report["symbols_dropped"][:20]]
         more = (
             ""
             if len(mh_report["symbols_dropped"]) <= 20
@@ -176,12 +164,9 @@ def main() -> None:
     print(f"    excused by window: {gate['n_excused_by_window']}")
     print(f"    UNEXPLAINED      : {gate['n_survivors']}")
     if gate["survivors"]:
-        for s in sorted(
-            gate["survivors"], key=lambda r: abs(r["ret"]), reverse=True
-        ):
+        for s in sorted(gate["survivors"], key=lambda r: abs(r["ret"]), reverse=True):
             print(
-                f"      {s['symbol']:<12} {s['date']}  close={s['close']}  "
-                f"return={s['ret']:+.4f}"
+                f"      {s['symbol']:<12} {s['date']}  close={s['close']}  return={s['ret']:+.4f}"
             )
     print(
         f"    yfinance-blind universe: {gate['n_yfinance_blind_total']} symbols; "
@@ -189,9 +174,7 @@ def main() -> None:
     )
     print(f"    GATE: {'PASS' if gate['pass'] else 'FAIL'}")
 
-    assert gate["pass"], (
-        f"Day-4C gate FAILED — {gate['n_survivors']} unexplained survivors remain"
-    )
+    assert gate["pass"], f"Day-4C gate FAILED — {gate['n_survivors']} unexplained survivors remain"
 
 
 if __name__ == "__main__":

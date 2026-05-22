@@ -40,9 +40,7 @@ def plot_symbols_per_sector(
     fig, ax = plt.subplots(figsize=(9, max(4, 0.32 * sec.height)))
     industries = sec["industry"].to_list()
     counts = sec["n_symbols"].to_list()
-    colors = [
-        APT_PALETTE[3] if c < thin_floor else APT_PALETTE[0] for c in counts
-    ]
+    colors = [APT_PALETTE[3] if c < thin_floor else APT_PALETTE[0] for c in counts]
     bars = ax.barh(industries, counts, color=colors)
     ax.invert_yaxis()
     ax.set_xlabel("symbols in cleaned universe")
@@ -79,11 +77,8 @@ def plot_history_length_distribution(
     counts = daily.group_by("symbol").len().rename({"len": "n_days"})
     nd = np.array(counts["n_days"].to_list())
     fig, ax = plt.subplots(figsize=(8, 4.5))
-    ax.hist(
-        nd, bins=40, color=APT_PALETTE[0], edgecolor="#1F5775", alpha=0.85
-    )
-    ax.axvline(min_days_floor, color=APT_PALETTE[3], lw=2, ls="--",
-               label="756-day floor (Rule 6)")
+    ax.hist(nd, bins=40, color=APT_PALETTE[0], edgecolor="#1F5775", alpha=0.85)
+    ax.axvline(min_days_floor, color=APT_PALETTE[3], lw=2, ls="--", label="756-day floor (Rule 6)")
     ax.set_xlabel("trading days per symbol")
     ax.set_ylabel("symbols")
     ax.set_title(
@@ -111,15 +106,9 @@ def plot_coverage_heatmap(daily: pl.DataFrame, out_path: Path) -> dict:
     """
     apply_style()
     enriched = daily.with_columns(pl.col("date").dt.year().alias("year"))
-    counts = (
-        enriched.group_by(["symbol", "year"]).len().rename({"len": "n_days"})
-    )
-    first_year = (
-        enriched.group_by("symbol").agg(pl.col("date").min().alias("first_d"))
-    )
-    syms = (
-        first_year.sort("first_d")["symbol"].to_list()
-    )
+    counts = enriched.group_by(["symbol", "year"]).len().rename({"len": "n_days"})
+    first_year = enriched.group_by("symbol").agg(pl.col("date").min().alias("first_d"))
+    syms = first_year.sort("first_d")["symbol"].to_list()
     years = sorted(set(counts["year"].to_list()))
     sym_to_idx = {s: i for i, s in enumerate(syms)}
     yr_to_idx = {y: i for i, y in enumerate(years)}
@@ -129,16 +118,14 @@ def plot_coverage_heatmap(daily: pl.DataFrame, out_path: Path) -> dict:
         grid[sym_to_idx[row["symbol"]], yr_to_idx[row["year"]]] = row["n_days"]
 
     fig, ax = plt.subplots(figsize=(8, max(4, 0.025 * len(syms))))
-    im = ax.imshow(grid, aspect="auto", cmap="viridis",
-                   interpolation="nearest", vmax=255)
+    im = ax.imshow(grid, aspect="auto", cmap="viridis", interpolation="nearest", vmax=255)
     ax.set_xticks(np.arange(len(years)))
     ax.set_xticklabels(years, rotation=45, ha="right", fontsize=8)
     ax.set_yticks([])
     ax.set_xlabel("year")
     ax.set_ylabel(f"symbols  (n={len(syms)}, sorted by first trading date)")
     ax.set_title(
-        "Coverage heatmap: trading days per symbol per year "
-        "(viridis: dark=missing, bright=full)"
+        "Coverage heatmap: trading days per symbol per year (viridis: dark=missing, bright=full)"
     )
     cbar = fig.colorbar(im, ax=ax, shrink=0.7)
     cbar.set_label("trading days in year")
@@ -182,9 +169,7 @@ def plot_return_distributions(
     rets = (
         daily.sort(["symbol", "date"])
         .with_columns(
-            (pl.col("close") / pl.col("close").shift(1).over("symbol"))
-            .log()
-            .alias("logret")
+            (pl.col("close") / pl.col("close").shift(1).over("symbol")).log().alias("logret")
         )
         .filter(pl.col("logret").is_not_null())
     )
@@ -195,17 +180,12 @@ def plot_return_distributions(
     )
     # Left: aggregate
     bins = np.linspace(-0.5, 0.5, 121)
-    ax_agg.hist(agg, bins=bins, color=APT_PALETTE[0],
-                edgecolor="#1F5775", alpha=0.85)
+    ax_agg.hist(agg, bins=bins, color=APT_PALETTE[0], edgecolor="#1F5775", alpha=0.85)
     ax_agg.set_yscale("log")
     ax_agg.set_xlabel("daily log-return")
     ax_agg.set_ylabel("count (log scale)")
-    ax_agg.set_title(
-        f"Aggregate log-return histogram  (n={len(agg):,}, "
-        f"|σ|≈{agg.std():.4f})"
-    )
-    ax_agg.axvline(-0.40, color=APT_PALETTE[3], lw=1.2, ls="--",
-                   label="±0.40 gate threshold")
+    ax_agg.set_title(f"Aggregate log-return histogram  (n={len(agg):,}, |σ|≈{agg.std():.4f})")
+    ax_agg.axvline(-0.40, color=APT_PALETTE[3], lw=1.2, ls="--", label="±0.40 gate threshold")
     ax_agg.axvline(0.40, color=APT_PALETTE[3], lw=1.2, ls="--")
     ax_agg.legend(loc="upper right")
 
@@ -219,7 +199,9 @@ def plot_return_distributions(
         h, edges = np.histogram(sub, bins=60, range=(-0.2, 0.2), density=True)
         centers = (edges[:-1] + edges[1:]) / 2
         ax_sample.plot(
-            centers, h, lw=1.5,
+            centers,
+            h,
+            lw=1.5,
             color=APT_PALETTE[i % len(APT_PALETTE)],
             label=f"{sym}  (n={len(sub):,})",
         )
@@ -279,16 +261,20 @@ def plot_adv_distribution(
 
     fig, ax = plt.subplots(figsize=(8, 4.5))
     bins = np.logspace(6, 11, 40)
-    ax.hist(vals, bins=bins, color=APT_PALETTE[0],
-            edgecolor="#1F5775", alpha=0.85)
+    ax.hist(vals, bins=bins, color=APT_PALETTE[0], edgecolor="#1F5775", alpha=0.85)
     ax.set_xscale("log")
-    ax.axvline(floor_inr, color=APT_PALETTE[3], lw=2, ls="--",
-               label=f"₹{floor_inr/1e7:.0f} crore floor (Rule 5)")
+    ax.axvline(
+        floor_inr,
+        color=APT_PALETTE[3],
+        lw=2,
+        ls="--",
+        label=f"₹{floor_inr / 1e7:.0f} crore floor (Rule 5)",
+    )
     ax.set_xlabel("median 60-day rolling-median ADV (INR, log)")
     ax.set_ylabel("symbols")
     ax.set_title(
         f"Per-symbol median ADV distribution  (n={len(vals)}, "
-        f"median ₹{np.median(vals)/1e7:.1f} cr)"
+        f"median ₹{np.median(vals) / 1e7:.1f} cr)"
     )
     ax.legend(loc="upper right")
     out_path.parent.mkdir(parents=True, exist_ok=True)

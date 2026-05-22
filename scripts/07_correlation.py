@@ -50,20 +50,15 @@ def main() -> None:
     )
 
     # Demonstration window: most recent 504 trading days.
-    trading_days = (
-        daily.select(pl.col("date").unique()).sort("date")["date"].to_list()
-    )
+    trading_days = daily.select(pl.col("date").unique()).sort("date")["date"].to_list()
     n_corr_days = settings.screening.n_corr_days
     if len(trading_days) < n_corr_days:
         raise RuntimeError(
-            f"Only {len(trading_days)} trading days available — need >= "
-            f"{n_corr_days}"
+            f"Only {len(trading_days)} trading days available — need >= {n_corr_days}"
         )
     start = trading_days[-n_corr_days]
     end = trading_days[-1]
-    logger.info(
-        "Demo window: {} → {} ({} trading days)", start, end, n_corr_days
-    )
+    logger.info("Demo window: {} → {} ({} trading days)", start, end, n_corr_days)
 
     # ------------------------------------------------------------------
     # Windowed correlation matrix (for the heatmap; reused inside
@@ -102,9 +97,7 @@ def main() -> None:
     # ------------------------------------------------------------------
     # Heatmap
     # ------------------------------------------------------------------
-    heatmap_path = (
-        settings.paths.plots_dir / "phase1" / "pairs" / "correlation_heatmap.png"
-    )
+    heatmap_path = settings.paths.plots_dir / "phase1" / "pairs" / "correlation_heatmap.png"
     heatmap_stats = plot_sector_clustered_correlation(
         win_corr.corr_matrix,
         win_corr.eligible_symbols,
@@ -118,9 +111,7 @@ def main() -> None:
     # ------------------------------------------------------------------
     if not pairs_df.is_empty():
         # Same-sector only (no cross-sector pairs)
-        sym_to_sector = dict(
-            zip(sectors["symbol"], sectors["industry"], strict=True)
-        )
+        sym_to_sector = dict(zip(sectors["symbol"], sectors["industry"], strict=True))
         for r in pairs_df.iter_rows(named=True):
             s1_sec = sym_to_sector.get(r["sym1"])
             s2_sec = sym_to_sector.get(r["sym2"])
@@ -147,8 +138,7 @@ def main() -> None:
         f"{daily['symbol'].n_unique()} symbols pass the window gap guard"
     )
     print(
-        f"  Common dates   : {win_corr.n_used_dates} / "
-        f"{win_corr.n_window_days} after intersection"
+        f"  Common dates   : {win_corr.n_used_dates} / {win_corr.n_window_days} after intersection"
     )
     print(
         f"  Threshold      : Pearson(log-returns) > "
@@ -171,10 +161,7 @@ def main() -> None:
         print("  Top 10 by correlation:")
         top = pairs_df.sort("corr", descending=True).head(10)
         for r in top.iter_rows(named=True):
-            print(
-                f"    {r['sym1']:<12} {r['sym2']:<12} "
-                f"corr={r['corr']:.4f}  sector={r['sector']}"
-            )
+            print(f"    {r['sym1']:<12} {r['sym2']:<12} corr={r['corr']:.4f}  sector={r['sector']}")
 
     # Final sanity: heatmap was produced with the eligible-symbol set
     assert heatmap_stats["n_symbols"] == len(win_corr.eligible_symbols)

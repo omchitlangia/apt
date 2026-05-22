@@ -93,9 +93,7 @@ def test_eligibility_excludes_internal_gap():
     days_hole = days[:20] + days[40:]
     b = _make_symbol("B", days_hole, [20.0] * len(days_hole))
     df = pl.concat([a, b])
-    el = window_eligible_symbols(
-        df, start=days[0], end=days[-1], max_internal_gap_days=10
-    )
+    el = window_eligible_symbols(df, start=days[0], end=days[-1], max_internal_gap_days=10)
     assert el == ["A"]
 
 
@@ -156,12 +154,10 @@ def _three_symbol_universe(
     rng = np.random.default_rng(seed)
     days = _weekdays(date(2020, 1, 1), n_days)
     rets_a = rng.normal(0, 0.01, n_days)
-    rets_b = a_b_corr * rets_a + np.sqrt(1 - a_b_corr**2) * rng.normal(
+    rets_b = a_b_corr * rets_a + np.sqrt(1 - a_b_corr**2) * rng.normal(0, 0.01, n_days)
+    rets_c = a_c_corr_target * rets_a + np.sqrt(max(0, 1 - a_c_corr_target**2)) * rng.normal(
         0, 0.01, n_days
     )
-    rets_c = a_c_corr_target * rets_a + np.sqrt(
-        max(0, 1 - a_c_corr_target**2)
-    ) * rng.normal(0, 0.01, n_days)
 
     def _series_from_rets(rets: np.ndarray) -> list[float]:
         # Start at 100, build closes from compounded returns.
@@ -194,9 +190,7 @@ def test_screen_pairs_keeps_above_threshold_same_sector():
 def test_screen_pairs_drops_below_threshold():
     daily, sectors = _three_symbol_universe(a_b_corr=0.50, a_c_corr_target=0.30)
     days = daily["date"].unique().sort()
-    pairs = screen_pairs(
-        daily, sectors, start=days[0], end=days[-1], corr_threshold=0.85
-    )
+    pairs = screen_pairs(daily, sectors, start=days[0], end=days[-1], corr_threshold=0.85)
     assert pairs.is_empty()
 
 
@@ -209,9 +203,7 @@ def test_screen_pairs_excludes_cross_sector_high_corr():
     daily = pl.concat([a, b])
     # Different sectors
     sectors = _sectors_df({"A": "SEC1", "B": "SEC2"})
-    pairs = screen_pairs(
-        daily, sectors, start=days[0], end=days[-1], corr_threshold=0.85
-    )
+    pairs = screen_pairs(daily, sectors, start=days[0], end=days[-1], corr_threshold=0.85)
     assert pairs.is_empty()
 
 
@@ -247,8 +239,7 @@ def test_screen_pairs_window_independence():
     rets_a = rng.normal(0, 0.01, 200)
     rets_b = np.concatenate(
         [
-            0.98 * rets_a[:100]
-            + 0.2 * rng.normal(0, 0.01, 100),  # high corr
+            0.98 * rets_a[:100] + 0.2 * rng.normal(0, 0.01, 100),  # high corr
             rng.normal(0, 0.01, 100),  # uncorrelated
         ]
     )
@@ -259,12 +250,8 @@ def test_screen_pairs_window_independence():
     daily = pl.concat([a, b])
     sectors = _sectors_df({"A": "S", "B": "S"})
 
-    pairs_first = screen_pairs(
-        daily, sectors, start=days[0], end=days[99], corr_threshold=0.85
-    )
-    pairs_second = screen_pairs(
-        daily, sectors, start=days[100], end=days[-1], corr_threshold=0.85
-    )
+    pairs_first = screen_pairs(daily, sectors, start=days[0], end=days[99], corr_threshold=0.85)
+    pairs_second = screen_pairs(daily, sectors, start=days[100], end=days[-1], corr_threshold=0.85)
     assert not pairs_first.is_empty()
     assert pairs_second.is_empty()
 
@@ -277,16 +264,12 @@ def test_screen_pairs_thin_sector_yields_nothing():
     b = _make_symbol("B", days, closes)
     daily = pl.concat([a, b])
     sectors = _sectors_df({"A": "SOLO", "B": "OTHER"})
-    pairs = screen_pairs(
-        daily, sectors, start=days[0], end=days[-1], corr_threshold=0.85
-    )
+    pairs = screen_pairs(daily, sectors, start=days[0], end=days[-1], corr_threshold=0.85)
     assert pairs.is_empty()
 
 
 def test_screen_pairs_invalid_window_raises():
-    daily = _make_symbol(
-        "A", _weekdays(date(2020, 1, 1), 10), [10.0] * 10
-    )
+    daily = _make_symbol("A", _weekdays(date(2020, 1, 1), 10), [10.0] * 10)
     sectors = _sectors_df({"A": "S"})
     with pytest.raises(ValueError, match="must be <"):
         screen_pairs(daily, sectors, start=date(2020, 6, 1), end=date(2020, 1, 1))

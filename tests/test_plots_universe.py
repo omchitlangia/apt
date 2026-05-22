@@ -57,9 +57,7 @@ def _synthetic_sectors(n_symbols: int = 7) -> pl.DataFrame:
         {
             "symbol": [f"S{i:03d}" for i in range(n_symbols)],
             "company_name": [f"Co {i}" for i in range(n_symbols)],
-            "industry": (
-                ["SECTOR_A"] * (n_symbols - 2) + ["SECTOR_B"] * 2
-            ),
+            "industry": (["SECTOR_A"] * (n_symbols - 2) + ["SECTOR_B"] * 2),
             "isin": [f"IN{i:010d}" for i in range(n_symbols)],
             "bse_industry": [""] * n_symbols,
         }
@@ -96,9 +94,7 @@ def test_plot_return_distributions_writes_png(tmp_path: Path):
     daily = _synthetic_daily(n_symbols=3, n_days=500)
     out = tmp_path / "04_returns.png"
     # Use the synthetic symbol names so the per-symbol overlay has data.
-    stats = plot_return_distributions(
-        daily, out, sample_symbols=("S000", "S001", "S002")
-    )
+    stats = plot_return_distributions(daily, out, sample_symbols=("S000", "S001", "S002"))
     assert out.exists() and out.stat().st_size > 1000
     # Smooth drifting closes → no extreme returns
     assert stats["n_abs_gt_0.2"] == 0

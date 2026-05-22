@@ -37,7 +37,7 @@ class WindowCorrelation:
     eligible_symbols: list[str]
     corr_matrix: np.ndarray  # shape (n_eligible, n_eligible), float64
     n_window_days: int  # number of distinct trading days in [start, end]
-    n_used_dates: int   # number of dates surviving the intersection drop_nulls
+    n_used_dates: int  # number of dates surviving the intersection drop_nulls
 
 
 # ---------------------------------------------------------------------------
@@ -68,12 +68,7 @@ def window_eligible_symbols(
         return []
 
     win_sorted = win.sort(["symbol", "date"]).with_columns(
-        pl.col("date")
-        .diff()
-        .over("symbol")
-        .dt.total_days()
-        .fill_null(0)
-        .alias("_gap")
+        pl.col("date").diff().over("symbol").dt.total_days().fill_null(0).alias("_gap")
     )
     per_sym = win_sorted.group_by("symbol").agg(
         [
@@ -84,9 +79,7 @@ def window_eligible_symbols(
         ]
     )
     eligible = per_sym.filter(
-        pl.col("has_start")
-        & pl.col("has_end")
-        & (pl.col("max_gap") <= max_internal_gap_days)
+        pl.col("has_start") & pl.col("has_end") & (pl.col("max_gap") <= max_internal_gap_days)
     )
     return sorted(eligible["symbol"].to_list())
 
@@ -145,11 +138,7 @@ def compute_window_correlation(
         eligible = sorted(requested)
 
     n_window_days = (
-        daily.filter((pl.col("date") >= start) & (pl.col("date") <= end))[
-            "date"
-        ]
-        .unique()
-        .len()
+        daily.filter((pl.col("date") >= start) & (pl.col("date") <= end))["date"].unique().len()
     )
     if not eligible:
         return WindowCorrelation(
@@ -163,15 +152,11 @@ def compute_window_correlation(
 
     win = (
         daily.filter(
-            pl.col("symbol").is_in(eligible)
-            & (pl.col("date") >= start)
-            & (pl.col("date") <= end)
+            pl.col("symbol").is_in(eligible) & (pl.col("date") >= start) & (pl.col("date") <= end)
         )
         .sort(["symbol", "date"])
         .with_columns(
-            (pl.col("close") / pl.col("close").shift(1).over("symbol"))
-            .log()
-            .alias("logret")
+            (pl.col("close") / pl.col("close").shift(1).over("symbol")).log().alias("logret")
         )
         .filter(pl.col("logret").is_not_null())
     )
@@ -262,9 +247,7 @@ def screen_pairs(
         logger.warning("Window [{}, {}]: no symbols passed the gap guard", start, end)
         return pl.DataFrame(schema=_PAIR_SCHEMA)
 
-    sym_to_sector = dict(
-        zip(sectors["symbol"], sectors["industry"], strict=True)
-    )
+    sym_to_sector = dict(zip(sectors["symbol"], sectors["industry"], strict=True))
 
     by_sector: dict[str, list[int]] = {}
     for i, s in enumerate(eligible):

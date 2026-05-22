@@ -53,19 +53,11 @@ def main() -> None:
     out_dir = settings.paths.plots_dir / "phase1" / "universe"
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    p1 = plot_symbols_per_sector(
-        daily, sectors, out_dir / "01_symbols_per_sector.png"
-    )
-    p2 = plot_history_length_distribution(
-        daily, out_dir / "02_history_length_distribution.png"
-    )
+    p1 = plot_symbols_per_sector(daily, sectors, out_dir / "01_symbols_per_sector.png")
+    p2 = plot_history_length_distribution(daily, out_dir / "02_history_length_distribution.png")
     p3 = plot_coverage_heatmap(daily, out_dir / "03_coverage_heatmap.png")
-    p4 = plot_return_distributions(
-        daily, out_dir / "04_return_distributions.png"
-    )
-    p5 = plot_adv_distribution(
-        daily, out_dir / "05_adv_distribution.png"
-    )
+    p4 = plot_return_distributions(daily, out_dir / "04_return_distributions.png")
+    p5 = plot_adv_distribution(daily, out_dir / "05_adv_distribution.png")
 
     print("\n=== 07_plot_universe complete ===")
     print(f"  output dir: {out_dir}")
@@ -76,9 +68,7 @@ def main() -> None:
         f"(median {p1['median_per_sector']} symbols/sector)"
     )
     if p1["thin_sectors"]:
-        thin_names = ", ".join(
-            f"{t['industry']}({t['n_symbols']})" for t in p1["thin_sectors"]
-        )
+        thin_names = ", ".join(f"{t['industry']}({t['n_symbols']})" for t in p1["thin_sectors"])
         print(f"    FLAG thin (< 5) : {thin_names}")
     else:
         print("    thin sectors    : none")
@@ -94,20 +84,14 @@ def main() -> None:
     print()
     print("  --- 3. Coverage heatmap ---")
     print(
-        f"    {p3['n_symbols']} symbols × {p3['n_years']} years "
-        f"({p3['year_min']}–{p3['year_max']})"
+        f"    {p3['n_symbols']} symbols × {p3['n_years']} years ({p3['year_min']}–{p3['year_max']})"
     )
-    print(
-        f"    started 2003-2004    : {p3['n_symbols_starting_2003_04']}"
-    )
-    print(
-        f"    started 2015+        : {p3['n_symbols_starting_2015_plus']}"
-    )
+    print(f"    started 2003-2004    : {p3['n_symbols_starting_2003_04']}")
+    print(f"    started 2015+        : {p3['n_symbols_starting_2015_plus']}")
     print()
     print("  --- 4. Return distributions ---")
     print(
-        f"    n_rets={p4['n_rets']:,}, σ={p4['std']:.4f}, "
-        f"min={p4['min']:.4f}, max={p4['max']:.4f}"
+        f"    n_rets={p4['n_rets']:,}, σ={p4['std']:.4f}, min={p4['min']:.4f}, max={p4['max']:.4f}"
     )
     print(f"    |logret| > 0.20      : {p4['n_abs_gt_0.2']}")
     if p4["top5_extreme"]:
@@ -120,8 +104,8 @@ def main() -> None:
     print()
     print("  --- 5. ADV distribution ---")
     print(
-        f"    n={p5['n_symbols']}; median ₹{p5['median_inr']/1e7:.1f} cr; "
-        f"p10 ₹{p5['p10_inr']/1e7:.2f} cr; p90 ₹{p5['p90_inr']/1e7:.1f} cr"
+        f"    n={p5['n_symbols']}; median ₹{p5['median_inr'] / 1e7:.1f} cr; "
+        f"p10 ₹{p5['p10_inr'] / 1e7:.2f} cr; p90 ₹{p5['p90_inr'] / 1e7:.1f} cr"
     )
     print(f"    below ₹1cr floor    : {p5['n_below_floor']}")
 
