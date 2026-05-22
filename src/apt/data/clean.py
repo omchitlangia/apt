@@ -491,18 +491,21 @@ def validation_gate(
     start_date: date = date(2011, 1, 1),
     threshold: float = 0.40,
     keep: list[tuple[str, date]] = KEEP_EVENTS,
+    keep_windows: list[tuple[date, date]] | None = None,
     yfinance_failed_symbols: set[str] | None = None,
 ) -> dict:
     """Re-scan ``df`` for unexplained ``>threshold`` single-day moves.
 
     A jump on ``date`` is *explained* if (symbol, date) is in the cached
-    dividend ex-date set or in ``keep``. Any other jump is a survivor and
-    fails the gate.
+    dividend ex-date set, in ``keep``, or lies inside one of the inclusive
+    ``keep_windows`` (e.g. ``[(date(2020,2,24), date(2020,4,3))]`` for the
+    COVID crash). Any other jump is a survivor and fails the gate.
 
     Returns a dict with the gate verdict, the survivor list, and the
     coverage check on the supplied ``yfinance_failed_symbols`` blind spot.
     """
     yfinance_failed_symbols = yfinance_failed_symbols or set()
+    keep_windows = keep_windows or []
 
     scan = (
         df.sort(["symbol", "date"])
@@ -520,9 +523,13 @@ def validation_gate(
     keep_keys: set[tuple[str, date]] = {(s, d) for s, d in keep}
 
     survivors: list[dict] = []
+    excused_by_window = 0
     for row in scan.to_dicts():
         key = (row["symbol"], row["date"])
         if key in keep_keys or key in dividend_keys:
+            continue
+        if any(start <= row["date"] <= end for start, end in keep_windows):
+            excused_by_window += 1
             continue
         survivors.append(row)
 
@@ -533,6 +540,7 @@ def validation_gate(
         "threshold": threshold,
         "n_big_moves": scan.height,
         "n_survivors": len(survivors),
+        "n_excused_by_window": excused_by_window,
         "survivors": survivors,
         "n_yfinance_blind_total": len(yfinance_failed_symbols),
         "n_yfinance_blind_survivors": len(yf_blind_survivors),
