@@ -83,7 +83,7 @@ def plot_history_length_distribution(
         nd, bins=40, color=APT_PALETTE[0], edgecolor="#1F5775", alpha=0.85
     )
     ax.axvline(min_days_floor, color=APT_PALETTE[3], lw=2, ls="--",
-               label=f"756-day floor (Rule 6)")
+               label="756-day floor (Rule 6)")
     ax.set_xlabel("trading days per symbol")
     ax.set_ylabel("symbols")
     ax.set_title(
