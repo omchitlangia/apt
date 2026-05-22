@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import date
 from pathlib import Path
 from typing import Any
 
@@ -45,6 +46,22 @@ class UniverseConfig(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="APT_UNIVERSE_")
 
 
+class LiquidityConfig(BaseSettings):
+    min_adv_inr: float = 10_000_000.0
+    rolling_window: int = 60
+    rolling_min_periods: int = 20
+
+    model_config = SettingsConfigDict(env_prefix="APT_LIQUIDITY_")
+
+
+class CleaningConfig(BaseSettings):
+    phantom_jump_threshold: float = 0.65
+    validation_jump_threshold: float = 0.40
+    validation_start: date = date(2011, 1, 1)
+
+    model_config = SettingsConfigDict(env_prefix="APT_CLEANING_")
+
+
 class ScreeningConfig(BaseSettings):
     correlation_threshold: float = 0.85
     n_corr_days: int = 504
@@ -77,6 +94,8 @@ class Settings(BaseSettings):
 
     paths: PathsConfig = PathsConfig()
     universe: UniverseConfig = UniverseConfig()
+    liquidity: LiquidityConfig = LiquidityConfig()
+    cleaning: CleaningConfig = CleaningConfig()
     screening: ScreeningConfig = ScreeningConfig()
     cointegration: CointegrationConfig = CointegrationConfig()
     spread: SpreadConfig = SpreadConfig()
@@ -90,6 +109,8 @@ class Settings(BaseSettings):
         return cls(
             paths=PathsConfig(**raw.get("paths", {})),
             universe=UniverseConfig(**raw.get("universe", {})),
+            liquidity=LiquidityConfig(**raw.get("liquidity", {})),
+            cleaning=CleaningConfig(**raw.get("cleaning", {})),
             screening=ScreeningConfig(**raw.get("screening", {})),
             cointegration=CointegrationConfig(**raw.get("cointegration", {})),
             spread=SpreadConfig(**raw.get("spread", {})),

@@ -14,6 +14,22 @@ universe:
   # 756 ≈ 3 trading years; filters out newly listed / thinly traded names
   min_history_days: 756
 
+liquidity:
+  # 60-day rolling-median ADV (close * volume) floor, in INR.
+  # 1 crore (₹10,000,000) is a conservative starting point — names below
+  # this are typically too thin for pairs trading.
+  min_adv_inr: 10000000
+  rolling_window: 60
+  rolling_min_periods: 20
+
+cleaning:
+  # Phantom-seam detection threshold for trim_phantom_history (Rule 3).
+  phantom_jump_threshold: 0.65
+  # Validation-gate threshold for the post-clean discontinuity scan.
+  validation_jump_threshold: 0.40
+  # Start of the validation re-scan window (full lookback).
+  validation_start: 2011-01-01
+
 screening:
   # 0.85 is aggressive enough to pre-screen without losing good pairs;
   # lowering to 0.70 roughly doubles pair count at the cost of weaker cointegration signal
