@@ -97,6 +97,31 @@ backtest:
   # Two legs per pair trade ⇒ 2× this per round trip in cost-log space.
   cost_bps_per_leg: 25.0
 
+risk_managed:
+  # Phase 2B ablation-ladder defaults. STRATEGY_SPEC.md §3.
+  # §3.2 fixed-fractional sizing: notional = risk_frac * C / stop_distance,
+  # where stop_distance = (z_stop − z_entry) * rolling_sigma_at_entry.
+  risk_frac: 0.01
+  # §3.3 per-pair notional cap
+  per_pair_cap: 0.12
+  # §3.4 cluster (sector) risk cap
+  cluster_cap: 0.05
+  # §3.6 total open-risk cap (gross book limit in capital fraction)
+  total_cap: 0.10
+  # §3.6 hard gross-leverage ceiling (sum |w_i| ≤ this multiple of capital)
+  gross_cap: 2.0
+  # §3.7 pair-kill switch — RELATIONSHIP-driven primary trigger; loss-count
+  # backstop loose at K=4 (NOT 2) so a normal losing streak on a still-
+  # cointegrating pair does not bench it.
+  kill_K: 4
+  kill_cap: 0.04
+  # Relationship-breakdown re-test cadence (trading days) and window:
+  kill_check_interval_days: 21
+  kill_relationship_window_days: 252
+  kill_relationship_adf_alpha: 0.05
+  kill_relationship_halflife_max_days: 60
+  kill_relationship_vol_ratio_max: 2.0
+
 parallel:
   # -1 = use all available cores; set to a positive integer to limit
   n_jobs: -1

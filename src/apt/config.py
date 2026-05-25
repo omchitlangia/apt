@@ -115,6 +115,23 @@ class BacktestConfig(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="APT_BACKTEST_")
 
 
+class RiskManagedConfig(BaseSettings):
+    risk_frac: float = 0.01
+    per_pair_cap: float = 0.12
+    cluster_cap: float = 0.05
+    total_cap: float = 0.10
+    gross_cap: float = 2.0
+    kill_K: int = 4
+    kill_cap: float = 0.04
+    kill_check_interval_days: int = 21
+    kill_relationship_window_days: int = 252
+    kill_relationship_adf_alpha: float = 0.05
+    kill_relationship_halflife_max_days: int = 60
+    kill_relationship_vol_ratio_max: float = 2.0
+
+    model_config = SettingsConfigDict(env_prefix="APT_RISK_MANAGED_")
+
+
 class ParallelConfig(BaseSettings):
     n_jobs: int = -1
 
@@ -133,6 +150,7 @@ class Settings(BaseSettings):
     spread: SpreadConfig = SpreadConfig()
     signal: SignalConfig = SignalConfig()
     backtest: BacktestConfig = BacktestConfig()
+    risk_managed: RiskManagedConfig = RiskManagedConfig()
     parallel: ParallelConfig = ParallelConfig()
 
     model_config = SettingsConfigDict(env_prefix="APT_")
@@ -150,6 +168,7 @@ class Settings(BaseSettings):
             spread=SpreadConfig(**raw.get("spread", {})),
             signal=SignalConfig(**raw.get("signal", {})),
             backtest=BacktestConfig(**raw.get("backtest", {})),
+            risk_managed=RiskManagedConfig(**raw.get("risk_managed", {})),
             parallel=ParallelConfig(**raw.get("parallel", {})),
         )
 

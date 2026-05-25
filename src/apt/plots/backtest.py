@@ -336,3 +336,229 @@ def plot_pair_card(
         "n_trades": len(trades),
         "out_path": str(out_path),
     }
+
+
+# ---------------------------------------------------------------------------
+# Phase 2B — risk-managed ablation plots
+# ---------------------------------------------------------------------------
+
+
+_RUNG_COLORS = {
+    "R0": "#7E8083",
+    "R1": "#F18F01",
+    "R2": "#3B8E5C",
+    "R3": "#2E86AB",
+    "R4": "#A23B72",
+}
+
+
+def plot_ladder_equity(
+    rung_results: dict[str, pl.DataFrame],
+    out_path: Path,
+    *,
+    title: str = "Risk-management ladder — cumulative net equity (gross of costs already applied)",
+    annotate_period: tuple[date, date] | None = None,
+    annotate_label: str = "2018-19 PSU-bank breakdown fold",
+) -> dict:
+    """Overlay R0..R4 net cumulative log-return curves on one chart.
+
+    ``rung_results`` maps rung label (e.g. ``'R0'``) → portfolio_daily frame
+    with columns ``date`` and ``net_log_ret``.
+    """
+    apply_style()
+    fig, ax = plt.subplots(figsize=(12, 5.5))
+    for rung_label, df in rung_results.items():
+        if df.is_empty():
+            continue
+        d_sorted = df.sort("date")
+        dates = d_sorted["date"].to_list()
+        cum_net_pct = (np.expm1(np.cumsum(d_sorted["net_log_ret"].to_numpy()))) * 100
+        color = _RUNG_COLORS.get(rung_label, "#7E8083")
+        ax.plot(dates, cum_net_pct, label=rung_label, color=color, lw=1.2)
+    ax.axhline(0, color="#7E8083", lw=0.5, ls=":")
+    if annotate_period is not None:
+        ax.axvspan(annotate_period[0], annotate_period[1], color="#E8E8E8", alpha=0.6)
+        ax.annotate(
+            annotate_label,
+            xy=(annotate_period[0], ax.get_ylim()[1] * 0.9 if ax.get_ylim()[1] else 0),
+            fontsize=8,
+            color="#7E8083",
+        )
+    ax.set_ylabel("cumulative net return (%)")
+    ax.set_xlabel("date")
+    ax.set_title(title, fontsize=12, fontweight="bold")
+    ax.legend(loc="upper left", fontsize=10)
+    ax.grid(True, alpha=0.3)
+    fig.tight_layout()
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out_path)
+    plt.close(fig)
+    return {"n_rungs": len(rung_results)}
+
+
+def plot_drawdown_per_rung(
+    rung_results: dict[str, pl.DataFrame],
+    out_path: Path,
+    *,
+    annotate_period: tuple[date, date] | None = None,
+    title: str = "Drawdown per rung (net of costs)",
+) -> dict:
+    """Drawdown curves R0..R4, with the breakdown fold optionally annotated."""
+    apply_style()
+    fig, ax = plt.subplots(figsize=(12, 4.5))
+    for rung_label, df in rung_results.items():
+        if df.is_empty():
+            continue
+        d_sorted = df.sort("date")
+        dates = d_sorted["date"].to_list()
+        cum_log = np.cumsum(d_sorted["net_log_ret"].to_numpy())
+        running_max = np.maximum.accumulate(cum_log)
+        dd_pct = (np.expm1(cum_log - running_max)) * 100
+        color = _RUNG_COLORS.get(rung_label, "#7E8083")
+        ax.plot(dates, dd_pct, label=rung_label, color=color, lw=1.0)
+    if annotate_period is not None:
+        ax.axvspan(annotate_period[0], annotate_period[1], color="#E8E8E8", alpha=0.6)
+    ax.axhline(0, color="#7E8083", lw=0.5, ls=":")
+    ax.set_ylabel("drawdown (%)")
+    ax.set_xlabel("date")
+    ax.set_title(title, fontsize=12, fontweight="bold")
+    ax.legend(loc="lower left", fontsize=9)
+    ax.grid(True, alpha=0.3)
+    fig.tight_layout()
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out_path)
+    plt.close(fig)
+    return {"n_rungs": len(rung_results)}
+
+
+def plot_cluster_exposure(
+    cluster_df: pl.DataFrame,
+    cluster_cap: float | None,
+    out_path: Path,
+    *,
+    title: str = "Per-cluster open exposure (capital fraction)",
+    highlight_period: tuple[date, date] | None = None,
+) -> dict:
+    """Stacked-area / line plot of per-cluster open exposure over time."""
+    apply_style()
+    if cluster_df.is_empty():
+        fig, ax = plt.subplots(figsize=(10, 4))
+        ax.text(0.5, 0.5, "no cluster exposure data", ha="center", va="center")
+        ax.axis("off")
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        fig.savefig(out_path)
+        plt.close(fig)
+        return {"n_clusters": 0}
+    sectors = sorted(cluster_df["sector"].unique().to_list())
+    pivot = (
+        cluster_df.pivot(index="date", on="sector", values="exposure").sort("date").fill_null(0.0)
+    )
+    dates = pivot["date"].to_list()
+    fig, ax = plt.subplots(figsize=(12, 5))
+    cmap = ["#2E86AB", "#A23B72", "#F18F01", "#3B8E5C", "#6B5B95", "#C73E1D", "#7E8083"]
+    for i, sec in enumerate(sectors):
+        if sec not in pivot.columns:
+            continue
+        ax.plot(dates, pivot[sec].to_numpy(), label=sec[:20], color=cmap[i % len(cmap)], lw=1.0)
+    if cluster_cap is not None and cluster_cap > 0:
+        ax.axhline(
+            cluster_cap,
+            color="#C73E1D",
+            lw=1.0,
+            ls="--",
+            label=f"cluster cap = {cluster_cap * 100:.0f}%",
+        )
+    if highlight_period is not None:
+        ax.axvspan(highlight_period[0], highlight_period[1], color="#E8E8E8", alpha=0.5)
+    ax.set_ylabel("exposure (fraction of capital)")
+    ax.set_xlabel("date")
+    ax.set_title(title, fontsize=12, fontweight="bold")
+    ax.legend(loc="upper left", fontsize=8, ncol=2)
+    ax.grid(True, alpha=0.3)
+    fig.tight_layout()
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out_path)
+    plt.close(fig)
+    return {"n_clusters": len(sectors)}
+
+
+def plot_carriers_r0_vs_r4(
+    pair_curves: dict[str, dict],
+    out_path: Path,
+    *,
+    title: str = "Carriers (PFC/SBIN, ONGC/OIL) — R0 vs R4 cumulative net P&L",
+) -> dict:
+    """Per-pair cumulative net log-return: R0 (equal-notional) vs R4 (full RM).
+
+    ``pair_curves`` maps pair_key → {"R0": pl.DataFrame, "R4": pl.DataFrame}.
+    Each DataFrame has columns ``date`` and ``net_log_ret``.
+    """
+    apply_style()
+    n = len(pair_curves)
+    if n == 0:
+        return {"n_pairs": 0}
+    fig, axes = plt.subplots(1, n, figsize=(6 * n, 4.5), squeeze=False)
+    axes = axes.flatten()
+    for i, (pkey, curves) in enumerate(pair_curves.items()):
+        ax = axes[i]
+        for rung_label, df in curves.items():
+            if df.is_empty():
+                continue
+            d_sorted = df.sort("date")
+            dates = d_sorted["date"].to_list()
+            cum_pct = (np.expm1(np.cumsum(d_sorted["net_log_ret"].to_numpy()))) * 100
+            color = _RUNG_COLORS.get(rung_label, "#7E8083")
+            ax.plot(dates, cum_pct, label=rung_label, color=color, lw=1.2)
+        ax.axhline(0, color="#7E8083", lw=0.5, ls=":")
+        ax.set_title(pkey, fontsize=11, fontweight="bold")
+        ax.set_ylabel("cum net P&L (%)")
+        ax.set_xlabel("date")
+        ax.legend(loc="upper left", fontsize=9)
+        ax.grid(True, alpha=0.3)
+    fig.suptitle(title, fontsize=12, fontweight="bold", y=1.0)
+    fig.tight_layout()
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out_path)
+    plt.close(fig)
+    return {"n_pairs": n}
+
+
+def plot_cluster_cap_sweep(
+    sweep_results: dict[str, dict],
+    out_path: Path,
+    *,
+    title: str = "Cluster-cap sweep — equity curve + max drawdown",
+) -> dict:
+    """Two-panel sweep plot. ``sweep_results`` maps arm label →
+    {"portfolio_daily": df, "metrics": {"max_drawdown_pct": ..., "ann_return_pct": ...}}.
+    """
+    apply_style()
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 7.5), height_ratios=[1.3, 1.0])
+    colors = ["#3B8E5C", "#2E86AB", "#A23B72", "#F18F01"]
+    for i, (label, payload) in enumerate(sweep_results.items()):
+        df = payload["portfolio_daily"]
+        if df.is_empty():
+            continue
+        d_sorted = df.sort("date")
+        dates = d_sorted["date"].to_list()
+        cum_pct = (np.expm1(np.cumsum(d_sorted["net_log_ret"].to_numpy()))) * 100
+        c = colors[i % len(colors)]
+        ax1.plot(dates, cum_pct, color=c, lw=1.2, label=label)
+        cum_log = np.cumsum(d_sorted["net_log_ret"].to_numpy())
+        dd_pct = (np.expm1(cum_log - np.maximum.accumulate(cum_log))) * 100
+        ax2.plot(dates, dd_pct, color=c, lw=1.0, label=label)
+    ax1.axhline(0, color="#7E8083", lw=0.5, ls=":")
+    ax1.set_ylabel("cumulative net (%)")
+    ax1.legend(loc="upper left", fontsize=10)
+    ax1.set_title(title, fontsize=12, fontweight="bold")
+    ax1.grid(True, alpha=0.3)
+    ax2.axhline(0, color="#7E8083", lw=0.5, ls=":")
+    ax2.set_ylabel("drawdown (%)")
+    ax2.set_xlabel("date")
+    ax2.legend(loc="lower left", fontsize=9)
+    ax2.grid(True, alpha=0.3)
+    fig.tight_layout()
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out_path)
+    plt.close(fig)
+    return {"n_arms": len(sweep_results)}
