@@ -86,6 +86,17 @@ signal:
   max_holding_cap_days: 60
   max_holding_half_life_multiplier: 3.0
 
+backtest:
+  # Phase 2A walk-forward. Folds = [prior 1008d][train 1008d][test 252d];
+  # rolled forward annually. The 252-day test gives ~1 trading year of OOS
+  # P&L per fold, ~8 folds across the full Nifty-500 history.
+  test_days_per_fold: 252
+  step_days: 252
+  # Round-trip transaction cost per leg, in basis points. Default = 25 bps
+  # is a realistic mid-range Indian-equity figure (brokerage + STT + slippage).
+  # Two legs per pair trade ⇒ 2× this per round trip in cost-log space.
+  cost_bps_per_leg: 25.0
+
 parallel:
   # -1 = use all available cores; set to a positive integer to limit
   n_jobs: -1

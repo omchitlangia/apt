@@ -107,6 +107,14 @@ class SignalConfig(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="APT_SIGNAL_")
 
 
+class BacktestConfig(BaseSettings):
+    test_days_per_fold: int = 252
+    step_days: int = 252
+    cost_bps_per_leg: float = 25.0
+
+    model_config = SettingsConfigDict(env_prefix="APT_BACKTEST_")
+
+
 class ParallelConfig(BaseSettings):
     n_jobs: int = -1
 
@@ -124,6 +132,7 @@ class Settings(BaseSettings):
     cointegration: CointegrationConfig = CointegrationConfig()
     spread: SpreadConfig = SpreadConfig()
     signal: SignalConfig = SignalConfig()
+    backtest: BacktestConfig = BacktestConfig()
     parallel: ParallelConfig = ParallelConfig()
 
     model_config = SettingsConfigDict(env_prefix="APT_")
@@ -140,6 +149,7 @@ class Settings(BaseSettings):
             cointegration=CointegrationConfig(**raw.get("cointegration", {})),
             spread=SpreadConfig(**raw.get("spread", {})),
             signal=SignalConfig(**raw.get("signal", {})),
+            backtest=BacktestConfig(**raw.get("backtest", {})),
             parallel=ParallelConfig(**raw.get("parallel", {})),
         )
 

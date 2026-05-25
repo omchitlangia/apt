@@ -126,3 +126,9 @@ def test_signal_defaults():
     assert settings.signal.stop_z == 3.5
     assert settings.signal.max_holding_cap_days == 60
     assert settings.signal.max_holding_half_life_multiplier == 3.0
+
+
+def test_backtest_defaults():
+    assert settings.backtest.test_days_per_fold == 252
+    assert settings.backtest.step_days == 252
+    assert settings.backtest.cost_bps_per_leg == 25.0
