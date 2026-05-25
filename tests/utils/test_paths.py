@@ -117,4 +117,12 @@ def test_cointegration_defaults():
 
 
 def test_spread_defaults():
-    assert settings.spread.rolling_window == 252
+    assert settings.spread.rolling_window == 60
+
+
+def test_signal_defaults():
+    assert settings.signal.entry_z == 2.0
+    assert settings.signal.exit_z == 0.5
+    assert settings.signal.stop_z == 3.5
+    assert settings.signal.max_holding_cap_days == 60
+    assert settings.signal.max_holding_half_life_multiplier == 3.0

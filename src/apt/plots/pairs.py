@@ -176,3 +176,88 @@ def plot_pair_spread(
         "mean": mu,
         "sigma": sigma,
     }
+
+
+def plot_spread_zscore_signal(
+    dates: list,
+    spread: np.ndarray,
+    z: np.ndarray,
+    position: np.ndarray,
+    *,
+    y_sym: str,
+    x_sym: str,
+    out_path: Path,
+    entry: float = 2.0,
+    exit_threshold: float = 0.5,
+    stop: float = 3.5,
+    sector: str | None = None,
+    extra_title: str | None = None,
+) -> dict:
+    """Two-panel plot: spread (top) + rolling z-score with bands + signal shading (bottom).
+
+    ``position`` is a length-N array in ``{-1, 0, +1}`` produced by
+    :func:`apt.signals.spread.generate_signals`. Long-spread bars are
+    shaded blue, short-spread bars red, on the z-score panel.
+    """
+    apply_style()
+    spread = np.asarray(spread, dtype=float)
+    z = np.asarray(z, dtype=float)
+    position = np.asarray(position, dtype=np.int8)
+
+    fig, (ax_s, ax_z) = plt.subplots(2, 1, figsize=(11, 6.5), sharex=True, height_ratios=[1.0, 1.3])
+    # ---- top: spread ----
+    ax_s.plot(dates, spread, color="#2E86AB", lw=0.9, label="spread")
+    if np.isfinite(spread).any():
+        mu_full = float(np.nanmean(spread))
+        ax_s.axhline(mu_full, color="#7E8083", lw=0.7, ls="--", label="full-window mean")
+    ax_s.set_ylabel("spread (log)")
+    ax_s.legend(loc="upper left", fontsize=8)
+
+    # ---- bottom: z-score + bands + position shading ----
+    ax_z.plot(dates, z, color="#2E86AB", lw=0.8, label="rolling z")
+    ax_z.axhline(0, color="#7E8083", lw=0.6, ls=":")
+    for k, c, label in (
+        (entry, "#C73E1D", f"±{entry:g} entry"),
+        (exit_threshold, "#3B8E5C", f"±{exit_threshold:g} exit"),
+        (stop, "#A23B72", f"±{stop:g} stop"),
+    ):
+        ax_z.axhline(+k, color=c, lw=0.6, ls="--", label=label)
+        ax_z.axhline(-k, color=c, lw=0.6, ls="--")
+
+    finite_z = z[np.isfinite(z)]
+    if finite_z.size:
+        zmax = max(float(np.max(finite_z)) * 1.05, stop * 1.05)
+        zmin = min(float(np.min(finite_z)) * 1.05, -stop * 1.05)
+        ax_z.set_ylim(zmin, zmax)
+    longs = position == 1
+    shorts = position == -1
+    if longs.any():
+        ax_z.fill_between(
+            dates, *ax_z.get_ylim(), where=longs, color="#2E86AB", alpha=0.13, step="pre"
+        )
+    if shorts.any():
+        ax_z.fill_between(
+            dates, *ax_z.get_ylim(), where=shorts, color="#C73E1D", alpha=0.13, step="pre"
+        )
+    ax_z.set_ylabel("rolling z-score")
+    ax_z.set_xlabel("date")
+    ax_z.legend(loc="upper left", ncol=4, fontsize=8)
+
+    title = f"Spread + z-signal:  {y_sym} − β·{x_sym}"
+    if sector:
+        title = f"{title}   [{sector}]"
+    if extra_title:
+        title = f"{title}\n{extra_title}"
+    fig.suptitle(title, fontsize=12, fontweight="bold")
+    fig.tight_layout()
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out_path)
+    plt.close(fig)
+    return {
+        "y_sym": y_sym,
+        "x_sym": x_sym,
+        "n_obs": int(spread.size),
+        "n_long_bars": int(longs.sum()),
+        "n_short_bars": int(shorts.sum()),
+    }

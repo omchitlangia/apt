@@ -92,9 +92,19 @@ class CointegrationConfig(BaseSettings):
 
 
 class SpreadConfig(BaseSettings):
-    rolling_window: int = 252
+    rolling_window: int = 60
 
     model_config = SettingsConfigDict(env_prefix="APT_SPREAD_")
+
+
+class SignalConfig(BaseSettings):
+    entry_z: float = 2.0
+    exit_z: float = 0.5
+    stop_z: float = 3.5
+    max_holding_cap_days: int = 60
+    max_holding_half_life_multiplier: float = 3.0
+
+    model_config = SettingsConfigDict(env_prefix="APT_SIGNAL_")
 
 
 class ParallelConfig(BaseSettings):
@@ -113,6 +123,7 @@ class Settings(BaseSettings):
     screening: ScreeningConfig = ScreeningConfig()
     cointegration: CointegrationConfig = CointegrationConfig()
     spread: SpreadConfig = SpreadConfig()
+    signal: SignalConfig = SignalConfig()
     parallel: ParallelConfig = ParallelConfig()
 
     model_config = SettingsConfigDict(env_prefix="APT_")
@@ -128,6 +139,7 @@ class Settings(BaseSettings):
             screening=ScreeningConfig(**raw.get("screening", {})),
             cointegration=CointegrationConfig(**raw.get("cointegration", {})),
             spread=SpreadConfig(**raw.get("spread", {})),
+            signal=SignalConfig(**raw.get("signal", {})),
             parallel=ParallelConfig(**raw.get("parallel", {})),
         )
 

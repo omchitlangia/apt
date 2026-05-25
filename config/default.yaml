@@ -68,8 +68,23 @@ cointegration:
   hurst_max_lag: 100
 
 spread:
-  # 252 ≈ 1 trading year; standard rolling window for z-score normalisation
-  rolling_window: 252
+  # 60 ≈ 3 trading months. Trailing rolling window for the causal z-score
+  # in apt.signals.spread.rolling_zscore. Shorter than the train window so
+  # the z adapts to mild drift; long enough that the std is well-estimated.
+  rolling_window: 60
+
+signal:
+  # Default thresholds for apt.signals.spread.generate_signals. TUNABLE, but
+  # any tuning happens per-fold on TRAINING windows only — never grid-searched
+  # on the full sample.
+  entry_z: 2.0
+  exit_z: 0.5
+  stop_z: 3.5
+  # Per-pair max_holding = min(max_holding_cap_days,
+  #                            half_life_multiplier * pair.half_life)
+  # The cap keeps capital from being stuck in a slow-mean-reverter for months.
+  max_holding_cap_days: 60
+  max_holding_half_life_multiplier: 3.0
 
 parallel:
   # -1 = use all available cores; set to a positive integer to limit
