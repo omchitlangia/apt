@@ -26,7 +26,6 @@ def ensure_dirs(cfg: Settings | None = None) -> None:
     (s.paths.plots_dir / "phase1" / "universe").mkdir(parents=True, exist_ok=True)
     (s.paths.plots_dir / "phase1" / "pairs").mkdir(parents=True, exist_ok=True)
     (s.paths.plots_dir / "phase2" / "backtest").mkdir(parents=True, exist_ok=True)
-    (s.paths.plots_dir / "phase2" / "risk_managed").mkdir(parents=True, exist_ok=True)
 
 
 def interim(filename: str, cfg: Settings | None = None) -> Path:

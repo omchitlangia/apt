@@ -132,19 +132,3 @@ def test_backtest_defaults():
     assert settings.backtest.test_days_per_fold == 252
     assert settings.backtest.step_days == 252
     assert settings.backtest.cost_bps_per_leg == 25.0
-
-
-def test_risk_managed_defaults():
-    rm = settings.risk_managed
-    assert rm.risk_frac == 0.01
-    assert rm.per_pair_cap == 0.12
-    assert rm.cluster_cap == 0.05
-    assert rm.total_cap == 0.10
-    assert rm.gross_cap == 2.0
-    assert rm.kill_K == 4
-    assert rm.kill_cap == 0.04
-    assert rm.kill_check_interval_days == 21
-    assert rm.kill_relationship_window_days == 252
-    assert rm.kill_relationship_adf_alpha == 0.05
-    assert rm.kill_relationship_halflife_max_days == 60
-    assert rm.kill_relationship_vol_ratio_max == 2.0
