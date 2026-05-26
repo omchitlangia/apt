@@ -33,6 +33,7 @@ from loguru import logger
 from apt.backtest import (
     Pair,
     RiskConfig,
+    apply_vol_target_overlay,
     build_folds,
     compute_metrics,
     run_walkforward,
@@ -44,6 +45,7 @@ from apt.plots.backtest import (
     plot_cluster_cap_sweep,
     plot_cluster_exposure,
     plot_drawdown_per_rung,
+    plot_final_equity_curve,
     plot_ladder_equity,
 )
 from apt.signals.cointegration import cointegrate_pairs
@@ -53,6 +55,12 @@ from apt.utils.paths import ensure_dirs, interim, processed, reports
 PHASE2B_PLOT_DIR = settings.paths.plots_dir / "phase2" / "risk_managed"
 BREAKDOWN_FOLD_PERIOD = (date(2018, 10, 11), date(2019, 10, 24))  # fold 6 in our build
 CARRIER_KEYS = ("PFC/SBIN", "ONGC/OIL")
+
+# Vol-target overlay knobs — apples-to-apples R0 vs R3 comparison
+VOL_TARGET_ANNUAL = 0.10
+VOL_TARGET_WINDOW = 60
+VOL_TARGET_MAX_LEV = 3.0
+VOL_TARGET_MIN_PERIODS = 20
 
 
 def _fold_period_metric(portfolio_daily: pl.DataFrame, start: date, end: date) -> dict:
@@ -70,6 +78,43 @@ def _carrier_metrics(per_pair_daily: dict[str, pl.DataFrame], pair_key: str) -> 
     if df is None or df.is_empty():
         return compute_metrics([])
     return compute_metrics(df["net_log_ret"].to_numpy())
+
+
+def _vol_match(res, label: str) -> dict | None:
+    """Apply causal vol-target overlay to a rung's portfolio_daily and return
+    the comparison block (dates, raw + overlaid returns, leverage, metrics)."""
+    port = res.portfolio_daily.sort("date")
+    if port.is_empty():
+        return None
+    raw_net = port["net_log_ret"].to_numpy()
+    overlaid, leverage = apply_vol_target_overlay(
+        raw_net,
+        target_vol_annual=VOL_TARGET_ANNUAL,
+        window=VOL_TARGET_WINDOW,
+        max_leverage=VOL_TARGET_MAX_LEV,
+        min_periods=VOL_TARGET_MIN_PERIODS,
+    )
+    dates = port["date"].to_list()
+    metrics = compute_metrics(overlaid)
+    bs, be = BREAKDOWN_FOLD_PERIOD
+    mask = np.array([bs <= d <= be for d in dates])
+    breakdown_returns = overlaid[mask] if mask.any() else np.array([])
+    breakdown_metrics = compute_metrics(breakdown_returns)
+    return {
+        "label": label,
+        "dates": dates,
+        "raw_returns": raw_net,
+        "vol_returns": overlaid,
+        "leverage": leverage,
+        "ann_return_pct": metrics["ann_return_pct"],
+        "sharpe": metrics["sharpe"],
+        "max_drawdown_pct": metrics["max_drawdown_pct"],
+        "ann_vol_pct": metrics["ann_vol_pct"],
+        "fold_18_19_pct": breakdown_metrics["total_return_pct"],
+        "raw_ann_vol_pct": compute_metrics(raw_net)["ann_vol_pct"],
+        "mean_leverage": float(np.mean(leverage)) if leverage.size else float("nan"),
+        "max_leverage_used": float(np.max(leverage)) if leverage.size else float("nan"),
+    }
 
 
 def _select_pairs_cb(daily: pl.DataFrame, sectors: pl.DataFrame):
@@ -446,6 +491,50 @@ def main() -> None:
     )
 
     # ------------------------------------------------------------------
+    # Vol-target overlay: apples-to-apples R0 vs R3 at 10% target vol
+    # R3 in the ladder is kill_mode='none' already (rung<4 ⇒ no intra-fold kill)
+    # ------------------------------------------------------------------
+    logger.info(
+        "Applying vol-target overlay (target={}%, window={}, max_lev={}x) ...",
+        int(VOL_TARGET_ANNUAL * 100),
+        VOL_TARGET_WINDOW,
+        VOL_TARGET_MAX_LEV,
+    )
+    r0_vm = _vol_match(rungs["R0"]["result"], "R0")
+    r3_vm = _vol_match(rungs["R3"]["result"], "R3")
+
+    if r0_vm is not None and r3_vm is not None:
+        plot_final_equity_curve(
+            r0_dates=r0_vm["dates"],
+            r0_vol_returns=r0_vm["vol_returns"],
+            r3_dates=r3_vm["dates"],
+            r3_vol_returns=r3_vm["vol_returns"],
+            r0_stats=r0_vm,
+            r3_stats=r3_vm,
+            cluster_df=rungs["R3"]["result"].cluster_exposure_daily,
+            cluster_cap=rungs["R3"]["config"].cluster_cap,
+            out_path=PHASE2B_PLOT_DIR / "final_equity_curve.png",
+            annotate_period=BREAKDOWN_FOLD_PERIOD,
+            target_vol_annual=VOL_TARGET_ANNUAL,
+        )
+
+        vol_match_rows = [
+            {
+                "rung": vm["label"],
+                "raw_ann_vol_pct": vm["raw_ann_vol_pct"],
+                "vol_targeted_ann_vol_pct": vm["ann_vol_pct"],
+                "vol_targeted_ann_return_pct": vm["ann_return_pct"],
+                "vol_targeted_sharpe": vm["sharpe"],
+                "vol_targeted_max_dd_pct": vm["max_drawdown_pct"],
+                "vol_targeted_fold_2018_19_pct": vm["fold_18_19_pct"],
+                "mean_leverage": vm["mean_leverage"],
+                "max_leverage_used": vm["max_leverage_used"],
+            }
+            for vm in (r0_vm, r3_vm)
+        ]
+        pl.DataFrame(vol_match_rows).write_csv(reports("risk_managed_vol_matched.csv"))
+
+    # ------------------------------------------------------------------
     # Console report
     # ------------------------------------------------------------------
     print("\n=== 12_risk_managed complete ===")
@@ -506,11 +595,32 @@ def main() -> None:
             f"{r['n_kill_events']:>5}  {r['n_premature_cuts']:>9}"
         )
     print()
+    if r0_vm is not None and r3_vm is not None:
+        print(
+            f"  --- Vol-matched comparison (target {int(VOL_TARGET_ANNUAL * 100)}% ann, "
+            f"{VOL_TARGET_WINDOW}d window, max {VOL_TARGET_MAX_LEV:.0f}x lev) ---"
+        )
+        print(
+            f"  {'rung':<6}  {'raw vol%':>8}  {'vt vol%':>7}  {'ann %':>7}  "
+            f"{'Sharpe':>7}  {'maxDD %':>8}  {'2018-19 %':>9}  {'meanLev':>7}  {'maxLev':>6}"
+        )
+        for vm in (r0_vm, r3_vm):
+            sh = vm["sharpe"]
+            sh_str = f"{sh:+7.2f}" if math.isfinite(sh) else "    n/a"
+            print(
+                f"  {vm['label']:<6}  {vm['raw_ann_vol_pct']:>+8.2f}  "
+                f"{vm['ann_vol_pct']:>+7.2f}  {vm['ann_return_pct']:>+7.1f}  "
+                f"{sh_str}  {vm['max_drawdown_pct']:>+8.1f}  "
+                f"{vm['fold_18_19_pct']:>+9.1f}  "
+                f"{vm['mean_leverage']:>7.2f}  {vm['max_leverage_used']:>6.2f}"
+            )
+        print()
     print("  Outputs:")
     print("    reports/risk_managed_ladder.csv")
     print("    reports/risk_managed_sweeps.csv")
     print("    reports/risk_managed_premature_cuts.csv")
     print("    reports/risk_managed_kill_events.csv")
+    print("    reports/risk_managed_vol_matched.csv")
     print("    plots/phase2/risk_managed/*.png")
 
 

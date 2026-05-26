@@ -13,6 +13,7 @@ from apt.backtest.risk_managed import (
     RMTrade,
     run_walkforward_risk_managed,
 )
+from apt.backtest.vol_target import apply_vol_target_overlay
 from apt.backtest.walkforward import (
     Fold,
     Pair,
@@ -33,6 +34,7 @@ __all__ = [
     "RiskManagedResult",
     "Trade",
     "WalkForwardResult",
+    "apply_vol_target_overlay",
     "build_folds",
     "compute_metrics",
     "run_walkforward",

@@ -523,6 +523,132 @@ def plot_carriers_r0_vs_r4(
     return {"n_pairs": n}
 
 
+def plot_final_equity_curve(
+    *,
+    r0_dates: list[date],
+    r0_vol_returns: np.ndarray,
+    r3_dates: list[date],
+    r3_vol_returns: np.ndarray,
+    r0_stats: dict,
+    r3_stats: dict,
+    cluster_df: pl.DataFrame,
+    cluster_cap: float | None,
+    out_path: Path,
+    annotate_period: tuple[date, date] | None = None,
+    annotate_label: str = "2018-19 breakdown fold",
+    target_vol_annual: float = 0.10,
+) -> dict:
+    """Three-panel vol-matched comparison: R0 vs R3 at common target vol.
+
+    * top — cumulative net equity, R0 & R3, both vol-targeted;
+    * middle — drawdown of each, with 2018-19 fold shaded;
+    * bottom — R3 raw per-cluster exposure (to surface cap binding).
+    """
+    apply_style()
+    fig, (ax1, ax2, ax3) = plt.subplots(
+        3, 1, figsize=(12, 10.5), height_ratios=[1.35, 1.0, 1.05]
+    )
+
+    r0_cum_pct = (np.expm1(np.cumsum(r0_vol_returns))) * 100
+    r3_cum_pct = (np.expm1(np.cumsum(r3_vol_returns))) * 100
+    ax1.plot(
+        r0_dates,
+        r0_cum_pct,
+        color=_RUNG_COLORS["R0"],
+        lw=1.3,
+        label=f"R0 (equal-notional)  vol@{target_vol_annual * 100:.0f}%",
+    )
+    ax1.plot(
+        r3_dates,
+        r3_cum_pct,
+        color=_RUNG_COLORS["R3"],
+        lw=1.3,
+        label=f"R3 (cluster cap + shared-leg)  vol@{target_vol_annual * 100:.0f}%",
+    )
+    if annotate_period is not None:
+        ax1.axvspan(annotate_period[0], annotate_period[1], color="#E8E8E8", alpha=0.6)
+    ax1.axhline(0, color="#7E8083", lw=0.5, ls=":")
+    ax1.set_ylabel("cumulative net return (%)")
+    ax1.legend(loc="upper left", fontsize=9)
+
+    def _fmt_stat(label: str, s: dict) -> str:
+        sh = s["sharpe"]
+        sh_str = f"{sh:+.2f}" if math.isfinite(sh) else "n/a"
+        return (
+            f"{label}: ann={s['ann_return_pct']:+.1f}%  "
+            f"Sh={sh_str}  "
+            f"maxDD={s['max_drawdown_pct']:+.1f}%  "
+            f"fold18-19={s['fold_18_19_pct']:+.1f}%"
+        )
+
+    ax1.set_title(
+        f"Vol-matched final equity (target {target_vol_annual * 100:.0f}% ann)\n"
+        f"{_fmt_stat('R0', r0_stats)}   |   {_fmt_stat('R3', r3_stats)}",
+        fontsize=10,
+        fontweight="bold",
+    )
+    ax1.grid(True, alpha=0.3)
+
+    r0_cum_log = np.cumsum(r0_vol_returns)
+    r3_cum_log = np.cumsum(r3_vol_returns)
+    r0_dd = (np.expm1(r0_cum_log - np.maximum.accumulate(r0_cum_log))) * 100
+    r3_dd = (np.expm1(r3_cum_log - np.maximum.accumulate(r3_cum_log))) * 100
+    ax2.plot(r0_dates, r0_dd, color=_RUNG_COLORS["R0"], lw=1.0, label="R0")
+    ax2.plot(r3_dates, r3_dd, color=_RUNG_COLORS["R3"], lw=1.0, label="R3")
+    if annotate_period is not None:
+        ax2.axvspan(annotate_period[0], annotate_period[1], color="#E8E8E8", alpha=0.6)
+        ylim_lo = float(min(r0_dd.min(), r3_dd.min())) if r0_dd.size and r3_dd.size else 0.0
+        ax2.annotate(
+            annotate_label,
+            xy=(annotate_period[0], ylim_lo * 0.5 if ylim_lo < 0 else 0),
+            fontsize=8,
+            color="#7E8083",
+        )
+    ax2.axhline(0, color="#7E8083", lw=0.5, ls=":")
+    ax2.set_ylabel("drawdown (%) — vol-targeted")
+    ax2.legend(loc="lower left", fontsize=9)
+    ax2.grid(True, alpha=0.3)
+
+    if cluster_df.is_empty():
+        ax3.text(0.5, 0.5, "no cluster exposure data", ha="center", va="center")
+        ax3.axis("off")
+    else:
+        sectors = sorted(cluster_df["sector"].unique().to_list())
+        pivot = (
+            cluster_df.pivot(index="date", on="sector", values="exposure")
+            .sort("date")
+            .fill_null(0.0)
+        )
+        dates_c = pivot["date"].to_list()
+        cmap = ["#2E86AB", "#A23B72", "#F18F01", "#3B8E5C", "#6B5B95", "#C73E1D", "#7E8083"]
+        for i, sec in enumerate(sectors):
+            if sec not in pivot.columns:
+                continue
+            ax3.plot(
+                dates_c, pivot[sec].to_numpy(), label=sec[:18], color=cmap[i % len(cmap)], lw=0.9
+            )
+        if cluster_cap is not None and cluster_cap > 0:
+            ax3.axhline(
+                cluster_cap,
+                color="#C73E1D",
+                lw=1.0,
+                ls="--",
+                label=f"cluster cap = {cluster_cap * 100:.0f}%",
+            )
+        if annotate_period is not None:
+            ax3.axvspan(annotate_period[0], annotate_period[1], color="#E8E8E8", alpha=0.5)
+        ax3.set_ylabel("R3 cluster exposure (pre-overlay)")
+        ax3.set_xlabel("date")
+        ax3.legend(loc="upper left", fontsize=7, ncol=3)
+        ax3.grid(True, alpha=0.3)
+
+    fig.tight_layout()
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out_path)
+    plt.close(fig)
+    return {"out_path": str(out_path)}
+
+
 def plot_cluster_cap_sweep(
     sweep_results: dict[str, dict],
     out_path: Path,
