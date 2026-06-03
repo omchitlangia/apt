@@ -79,16 +79,16 @@ MINUTE_ROOT = Path("data/interim/minute_raw")
 MINUTE_PANEL_START = date(2015, 2, 2)
 MINUTE_PANEL_END = date(2021, 6, 23)
 
-# Intraday liquidity floor (re-derived; the daily ADV floor is too loose):
-#   - both legs: per-session fill-rate >= 0.90
-#   - both legs: median per-min traded value high enough that the target
-#     per-pair-per-leg notional sits at <= 2% of that minute's typical volume.
-# POC scale: target Rs 50,000 notional per leg (Rs 1 lakh per pair).
-# Required typical per-minute traded value = Rs 50,000 / 2% = Rs 25 lakh.
-# (Phase 3 reports the gate-rejection count separately — this is a tunable
-# defensible POC threshold, not a regulatory floor.)
-TARGET_PER_LEG_NOTIONAL_INR = 50_000
-TARGET_NOTIONAL_PCT_OF_MIN_VOL = 0.02
+# Intraday liquidity gate — FILL-RATE ONLY (v2, 2026-06-03 re-run).
+# Rationale: at the POC notional of Rs 50,000 per leg, market impact is
+# negligible — any minute with a real trade can absorb the order. The
+# binding constraint is therefore "does a fill exist this minute?", not
+# "what share of that minute's volume are we?". The v1 per-minute-volume
+# cap (Rs 50k / 2% → Rs 2.5M/min floor) was a CAPACITY constraint sized
+# for a much larger book; on a POC book it collapsed the tradeable set to
+# 3 pairs (all anchored on HDFCBANK), excluding daily carriers like
+# ONGC/OIL. Reverting to fill-rate-only restores a representative sample.
+TARGET_PER_LEG_NOTIONAL_INR = 50_000  # documentation only; not used in gate
 MIN_SESSION_FILL_RATE = 0.90
 
 # Rolling-window default: half_life_days * 375 minutes, clamped to
@@ -216,16 +216,19 @@ def _intraday_liquidity_metrics(sym: str, start: date, end: date) -> dict:
 def _passes_intraday_floor(
     pair: Pair, train_start: date, train_end: date
 ) -> tuple[bool, dict, dict]:
-    """Apply the two-gate intraday liquidity floor on the TRAIN window."""
+    """Apply the FILL-RATE-ONLY intraday liquidity gate (v2).
+
+    Both legs must have ``fill_rate >= MIN_SESSION_FILL_RATE`` over the
+    probe window. The per-minute traded-value floor and the 2%-of-volume
+    cap are intentionally removed — they were a CAPACITY constraint, not
+    a tradeability constraint, and they suppressed daily carriers at the
+    POC notional. Median per-minute traded value is still computed and
+    returned for transparency, but it is NOT a gate.
+    """
     m_y = _intraday_liquidity_metrics(pair.y_sym, train_start, train_end)
     m_x = _intraday_liquidity_metrics(pair.x_sym, train_start, train_end)
-    needed_min_rupee = TARGET_PER_LEG_NOTIONAL_INR / TARGET_NOTIONAL_PCT_OF_MIN_VOL
-    pass_y = (m_y["fill_rate"] >= MIN_SESSION_FILL_RATE) and (
-        m_y["median_min_rupee"] >= needed_min_rupee
-    )
-    pass_x = (m_x["fill_rate"] >= MIN_SESSION_FILL_RATE) and (
-        m_x["median_min_rupee"] >= needed_min_rupee
-    )
+    pass_y = m_y["fill_rate"] >= MIN_SESSION_FILL_RATE
+    pass_x = m_x["fill_rate"] >= MIN_SESSION_FILL_RATE
     return bool(pass_y and pass_x), m_y, m_x
 
 
@@ -515,8 +518,8 @@ def main() -> None:
     n_kept = liq_df["intraday_pass"].sum()
     n_total = len(liq_df)
     logger.info(
-        "Intraday liquidity floor: {} / {} pair-fold units survive (notional Rs {:,}, "
-        "2% of typical minute-vol, fill-rate >= {})",
+        "Intraday liquidity gate (v2, fill-rate only): {} / {} pair-fold units survive "
+        "(POC notional Rs {:,}/leg; fill-rate >= {} on both legs)",
         int(n_kept),
         int(n_total),
         TARGET_PER_LEG_NOTIONAL_INR,
@@ -713,11 +716,16 @@ def main() -> None:
     # -- stage 5: plots -----------------------------------------------------
     _emit_plots(metrics_rows, portfolio_rows, cache, folds)
 
+    # -- stage 6: expanded reporting (v2) ----------------------------------
+    v2_summary = _emit_phase3_v2_outputs(cache, folds, pair_fold_keep, base_cost_log)
+
     # -- caveats ------------------------------------------------------------
     _write_caveats(metrics_rows)
 
     # -- console summary ----------------------------------------------------
     _print_summary(metrics_rows, len(cache), len(folds), n_kept, n_total)
+    if v2_summary is not None:
+        _print_v2_summary(v2_summary)
     print("\n=== 13_phase3_intraday complete ===\n")
 
 
@@ -861,6 +869,488 @@ def _emit_sensitivity_diagnostics(cache, folds, pair_fold_keep) -> None:
     logger.info("Sensitivity diag saved to {}", REPORTS_DIR / "sensitivity_z_and_window.csv")
 
 
+_STRUCTURAL_PAIR_KEYS: frozenset[str] = frozenset({"HDFC/HDFCBANK"})
+# Renamed exit reasons for the v2 trade-level export (matches the brief's
+# taxonomy: mean_revert / z_stop / time_stop / eod_squareoff / fold_close).
+_EXIT_REASON_RENAME: dict[str, str] = {
+    "mean_revert": "mean_revert",
+    "stop": "z_stop",
+    "time": "time_stop",
+    "session_close": "eod_squareoff",
+    "fold_boundary": "fold_close",
+}
+
+
+def _portfolio_from_cache(
+    cache: dict,
+    regime: str,
+    new_cost_log: float,
+    base_cost_log: float,
+    exclude_keys: frozenset[str] | set[str] = frozenset(),
+) -> tuple[pd.DataFrame, list]:
+    """Aggregate a (regime, cost) view into an equal-weighted portfolio.
+
+    Equal notional per active pair, idle capital at 0%, MEAN across pairs
+    per session (matches Phase 2A and the v1 phase-3 aggregation).
+    Returns the per-session portfolio frame + the new (cost-restamped) trade list.
+    Pairs whose key is in ``exclude_keys`` are dropped before aggregation.
+    """
+    pair_daily: dict[str, pd.DataFrame] = {}
+    all_new_trades: list = []
+    for (fold_id, pair_key), res in cache.items():
+        if pair_key in exclude_keys:
+            continue
+        pf_res = res[regime]
+        net_arr, new_trades = _net_pnl_for_cost(
+            pf_res, new_cost_log=new_cost_log, base_cost_log=base_cost_log
+        )
+        all_new_trades.extend(new_trades)
+        df = pd.DataFrame(
+            {
+                "date": pd.DatetimeIndex(pf_res.timestamps).date,
+                "gross_log_ret": pf_res.gross_log_ret,
+                "net_log_ret": net_arr,
+            }
+        )
+        pair_session_df = df.groupby("date", as_index=False)[["gross_log_ret", "net_log_ret"]].sum()
+        pair_session_df["active"] = (
+            df.assign(active=(df["gross_log_ret"] != 0) | (df["net_log_ret"] != 0))
+            .groupby("date")["active"]
+            .any()
+            .reindex(pair_session_df["date"])
+            .values
+        )
+        pair_session_df["fold_id"] = fold_id
+        pair_session_df["pair"] = pair_key
+        pair_daily[f"{pair_key}::f{fold_id}"] = pair_session_df
+
+    if not pair_daily:
+        return pd.DataFrame(columns=["date", "gross_log_ret", "net_log_ret"]), []
+
+    all_df = pd.concat(pair_daily.values(), ignore_index=True)
+    port = (
+        all_df.groupby("date", as_index=False)
+        .agg(
+            gross_log_ret=("gross_log_ret", "mean"),
+            net_log_ret=("net_log_ret", "mean"),
+            n_pairs=("pair", "nunique"),
+            n_active=("active", "sum"),
+        )
+        .sort_values("date")
+    )
+    return port, all_new_trades
+
+
+def _per_pair_metrics_at_3bps(
+    cache: dict,
+    pair_fold_keep: dict,
+    regime: str,
+    base_cost_log: float,
+) -> pd.DataFrame:
+    """Full per-pair metrics at 3 bps total spread, ranked by net_ann_pct."""
+    cost_log = CostBreakdown(total_spread_bps=3).cost_log_per_pair_round_trip
+    rows: list[dict] = []
+    for (fold_id, pair_key), res in cache.items():
+        pf_res = res[regime]
+        net_arr, new_trades = _net_pnl_for_cost(
+            pf_res, new_cost_log=cost_log, base_cost_log=base_cost_log
+        )
+        df = pd.DataFrame(
+            {
+                "date": pd.DatetimeIndex(pf_res.timestamps).date,
+                "gross_log_ret": pf_res.gross_log_ret,
+                "net_log_ret": net_arr,
+            }
+        )
+        daily = df.groupby("date", as_index=False)[["gross_log_ret", "net_log_ret"]].sum()
+        active_per_day = (
+            df.assign(active=(df["gross_log_ret"] != 0) | (df["net_log_ret"] != 0))
+            .groupby("date")["active"]
+            .any()
+        )
+        pct_time_deployed = float(active_per_day.mean()) if not active_per_day.empty else 0.0
+        m_g = compute_metrics(daily["gross_log_ret"].to_numpy())
+        m_n = compute_metrics(daily["net_log_ret"].to_numpy())
+
+        n_trades = len(new_trades)
+        n_wins = sum(1 for t in new_trades if t.net_log_pnl > 0)
+        win_rate = n_wins / n_trades if n_trades else 0.0
+        avg_hold_bars = float(sum(t.bars_held for t in new_trades) / n_trades) if n_trades else 0.0
+        avg_hold_sessions = (
+            float(sum(t.sessions_held for t in new_trades) / n_trades) if n_trades else 0.0
+        )
+        exit_split: dict[str, int] = defaultdict(int)
+        for t in new_trades:
+            exit_split[_EXIT_REASON_RENAME.get(t.exit_reason, t.exit_reason)] += 1
+
+        pair_obj = pair_fold_keep.get((fold_id, pair_key))
+        rows.append(
+            {
+                "fold_id": fold_id,
+                "pair": pair_key,
+                "sector": pair_obj.sector if pair_obj else "",
+                "is_structural": bool(pair_obj.is_structural) if pair_obj else False,
+                "is_hdfcbank_anchored": "HDFCBANK" in pair_key.split("/"),
+                "n_trades": n_trades,
+                "n_obs": int(daily.shape[0]),
+                "gross_total_pct": m_g["total_return_pct"],
+                "net_total_pct": m_n["total_return_pct"],
+                "gross_ann_pct": m_g["ann_return_pct"],
+                "net_ann_pct": m_n["ann_return_pct"],
+                "gross_sharpe": m_g["sharpe"],
+                "net_sharpe": m_n["sharpe"],
+                "net_max_drawdown_pct": m_n["max_drawdown_pct"],
+                "win_rate_net": win_rate,
+                "avg_bars_held": avg_hold_bars,
+                "avg_sessions_held": avg_hold_sessions,
+                "pct_time_deployed": pct_time_deployed,
+                "exit_mean_revert": exit_split.get("mean_revert", 0),
+                "exit_z_stop": exit_split.get("z_stop", 0),
+                "exit_time_stop": exit_split.get("time_stop", 0),
+                "exit_eod_squareoff": exit_split.get("eod_squareoff", 0),
+                "exit_fold_close": exit_split.get("fold_close", 0),
+            }
+        )
+    df = pd.DataFrame(rows)
+    if df.empty:
+        return df
+    return df.sort_values("net_ann_pct", ascending=False, na_position="last").reset_index(drop=True)
+
+
+def _trade_level_rows_at_3bps(
+    cache: dict,
+    pair_fold_keep: dict,
+    regime: str,
+    base_cost_log: float,
+) -> list[dict]:
+    """One row per round-trip at 3 bps, with reconstructable-net columns."""
+    cb_3 = CostBreakdown(total_spread_bps=3)
+    cost_log = cb_3.cost_log_per_pair_round_trip
+    n_legs = 2
+    rows: list[dict] = []
+    for (fold_id, pair_key), res in cache.items():
+        pf_res = res[regime]
+        _, new_trades = _net_pnl_for_cost(
+            pf_res, new_cost_log=cost_log, base_cost_log=base_cost_log
+        )
+        pair_obj = pair_fold_keep.get((fold_id, pair_key))
+        sector = pair_obj.sector if pair_obj else ""
+        is_structural = bool(pair_obj.is_structural) if pair_obj else False
+        is_hdfcbank_anchored = "HDFCBANK" in pair_key.split("/")
+        for t in new_trades:
+            side = "long_spread" if t.direction == 1 else "short_spread"
+            rows.append(
+                {
+                    "fold_id": fold_id,
+                    "regime": regime,
+                    "pair": pair_key,
+                    "sector": sector,
+                    "is_structural": is_structural,
+                    "is_hdfcbank_anchored": is_hdfcbank_anchored,
+                    "side": side,
+                    "entry_ts": t.entry_ts.isoformat(),
+                    "exit_ts": t.exit_ts.isoformat(),
+                    "z_entry": t.entry_z,
+                    "z_exit": t.exit_z,
+                    "bars_held": t.bars_held,
+                    "sessions_held": t.sessions_held,
+                    "gross_log_pnl": t.gross_log_pnl,
+                    "net_log_pnl_at_3bps": t.net_log_pnl,
+                    "gross_pct": float(np.expm1(t.gross_log_pnl) * 100),
+                    "net_pct_at_3bps": float(np.expm1(t.net_log_pnl) * 100),
+                    "cost_bps_excl_spread_per_leg_rt": FIXED_PER_LEG_RT,
+                    "n_legs": n_legs,
+                    "exit_reason": _EXIT_REASON_RENAME.get(t.exit_reason, t.exit_reason),
+                }
+            )
+    return rows
+
+
+def _emit_phase3_v2_outputs(
+    cache: dict,
+    folds: list,
+    pair_fold_keep: dict,
+    base_cost_log: float,
+) -> dict | None:
+    """Phase-3 re-run (v2) outputs: full per-pair tables, trade-level CSVs,
+    with/without-HDFC/HDFCBANK splits, full-span equity curve, and a refreshed
+    sharpe-vs-spread sweep. Designed to coexist with the v1 outputs from the
+    original run; nothing here overwrites existing files.
+    """
+    if not cache:
+        return None
+
+    n_pair_folds_total = len(cache)
+    n_pair_folds_ex = sum(1 for k in cache if k[1] not in _STRUCTURAL_PAIR_KEYS)
+    logger.info(
+        "v2 outputs: {} pair-fold units total; {} after excluding HDFC/HDFCBANK",
+        n_pair_folds_total,
+        n_pair_folds_ex,
+    )
+
+    # --- 1. Trade-level CSVs for both regimes -----------------------------
+    for regime in ("A", "B"):
+        rows = _trade_level_rows_at_3bps(cache, pair_fold_keep, regime, base_cost_log)
+        df = pd.DataFrame(rows)
+        out_path = REPORTS_DIR / f"trades_all_pairs_{regime}.csv"
+        df.to_csv(out_path, index=False)
+        logger.info("  wrote {} ({} trades, regime {})", out_path, len(df), regime)
+
+    # --- 2. Full per-pair performance tables ------------------------------
+    for regime in ("A", "B"):
+        df = _per_pair_metrics_at_3bps(cache, pair_fold_keep, regime, base_cost_log)
+        out_path = REPORTS_DIR / f"per_pair_full_{regime}.csv"
+        df.to_csv(out_path, index=False)
+        logger.info("  wrote {} ({} pair-fold rows, regime {})", out_path, len(df), regime)
+
+    # --- 3. metrics_two_regime_v2.csv: spread sweep with/without HDFC/HDFCBANK
+    metrics_v2: list[dict] = []
+    for cb in cost_breakdowns():
+        cost_log = cb.cost_log_per_pair_round_trip
+        for regime in ("A", "B"):
+            for variant_name, exclude in (
+                ("all", frozenset()),
+                ("ex_hdfc_hdfcbank", _STRUCTURAL_PAIR_KEYS),
+            ):
+                port, trades_v = _portfolio_from_cache(
+                    cache, regime, cost_log, base_cost_log, exclude
+                )
+                if port.empty:
+                    continue
+                m_g = compute_metrics(port["gross_log_ret"].to_numpy())
+                m_n = compute_metrics(port["net_log_ret"].to_numpy())
+                metrics_v2.append(
+                    {
+                        "variant": variant_name,
+                        "regime": regime,
+                        "spread_bps": cb.total_spread_bps,
+                        "n_pair_fold_units": len([k for k in cache if k[1] not in exclude]),
+                        "n_trades": len(trades_v),
+                        "gross_total_pct": m_g["total_return_pct"],
+                        "net_total_pct": m_n["total_return_pct"],
+                        "gross_ann_pct": m_g["ann_return_pct"],
+                        "net_ann_pct": m_n["ann_return_pct"],
+                        "gross_sharpe": m_g["sharpe"],
+                        "net_sharpe": m_n["sharpe"],
+                        "net_max_drawdown_pct": m_n["max_drawdown_pct"],
+                        "pct_time_deployed": float((port["n_active"] > 0).mean()),
+                    }
+                )
+    metrics_v2_df = pd.DataFrame(metrics_v2)
+    metrics_v2_df.to_csv(REPORTS_DIR / "metrics_two_regime_v2.csv", index=False)
+    logger.info(
+        "  wrote {} ({} rows)",
+        REPORTS_DIR / "metrics_two_regime_v2.csv",
+        len(metrics_v2_df),
+    )
+
+    # --- 4. equity_curve_daily.csv (3 bps) + full-span plot ---------------
+    cost_log_3 = CostBreakdown(total_spread_bps=3).cost_log_per_pair_round_trip
+    portA_all, _ = _portfolio_from_cache(cache, "A", cost_log_3, base_cost_log)
+    portB_all, _ = _portfolio_from_cache(cache, "B", cost_log_3, base_cost_log)
+    portA_ex, _ = _portfolio_from_cache(
+        cache, "A", cost_log_3, base_cost_log, _STRUCTURAL_PAIR_KEYS
+    )
+    portB_ex, _ = _portfolio_from_cache(
+        cache, "B", cost_log_3, base_cost_log, _STRUCTURAL_PAIR_KEYS
+    )
+    eq_frames = {
+        "A_net": portA_all,
+        "B_net": portB_all,
+        "A_net_exHDFCBANK": portA_ex,
+        "B_net_exHDFCBANK": portB_ex,
+    }
+    # union date axis
+    all_dates: set = set()
+    for fr in eq_frames.values():
+        all_dates.update(fr["date"].tolist())
+    sorted_dates = sorted(all_dates)
+    eq_df = pd.DataFrame({"date": sorted_dates})
+    for col, fr in eq_frames.items():
+        s = fr.set_index("date")["net_log_ret"].reindex(sorted_dates).fillna(0.0)
+        eq_df[col] = s.values
+    eq_df.to_csv(REPORTS_DIR / "equity_curve_daily.csv", index=False)
+    logger.info(
+        "  wrote {} ({} sessions)",
+        REPORTS_DIR / "equity_curve_daily.csv",
+        len(eq_df),
+    )
+
+    _plot_full_span_equity(eq_df)
+    _plot_sharpe_vs_spread_v2(metrics_v2_df)
+    _plot_equity_a_vs_b_3bps(portA_all, portB_all, portA_ex, portB_ex)
+
+    # Return summary dict for print
+    return {
+        "n_pair_folds": n_pair_folds_total,
+        "n_pair_folds_ex": n_pair_folds_ex,
+        "metrics_v2": metrics_v2_df,
+    }
+
+
+def _plot_full_span_equity(eq_df: pd.DataFrame) -> None:
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    fig, ax = plt.subplots(figsize=(12, 6))
+    dates = pd.to_datetime(eq_df["date"])
+    for col, ls, color in (
+        ("A_net", "-", "tab:red"),
+        ("A_net_exHDFCBANK", "--", "tab:red"),
+        ("B_net", "-", "tab:blue"),
+        ("B_net_exHDFCBANK", "--", "tab:blue"),
+    ):
+        ax.plot(dates, eq_df[col].cumsum(), linestyle=ls, color=color, label=col)
+    ax.axhline(0, color="gray", linewidth=0.5)
+    ax.set_title(
+        "Phase 3 v2 — full-span equity at 3 bps spread (solid = all; dashed = ex HDFC/HDFCBANK)"
+    )
+    ax.set_xlabel("Date")
+    ax.set_ylabel("Cumulative net log return")
+    ax.legend(loc="best", fontsize=9)
+    ax.grid(alpha=0.3)
+    fig.tight_layout()
+    fig.savefig(PLOTS_DIR / "equity_curve_full_span.png", dpi=140)
+    plt.close(fig)
+
+
+def _plot_sharpe_vs_spread_v2(metrics_v2_df: pd.DataFrame) -> None:
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    if metrics_v2_df.empty:
+        return
+    fig, ax = plt.subplots(figsize=(10, 6))
+    for variant, ls in (("all", "-"), ("ex_hdfc_hdfcbank", "--")):
+        for regime, marker, color in (("A", "o", "tab:red"), ("B", "s", "tab:blue")):
+            sub = metrics_v2_df[
+                (metrics_v2_df["variant"] == variant) & (metrics_v2_df["regime"] == regime)
+            ].sort_values("spread_bps")
+            if sub.empty:
+                continue
+            ax.plot(
+                sub["spread_bps"],
+                sub["net_sharpe"],
+                linestyle=ls,
+                marker=marker,
+                color=color,
+                label=f"Regime {regime} ({variant})",
+            )
+    ax.axhline(0, color="gray", linewidth=0.5)
+    ax.axhline(
+        DAILY_BASELINE_NET_SHARPE,
+        color="black",
+        linestyle=":",
+        linewidth=0.8,
+        label=f"daily Phase 2A net Sharpe = {DAILY_BASELINE_NET_SHARPE:.2f}",
+    )
+    ax.set_xlabel("Assumed total bid-ask spread (bps)")
+    ax.set_ylabel("Net Sharpe")
+    ax.set_title("Phase 3 v2 — net Sharpe vs assumed spread (with & without HDFC/HDFCBANK)")
+    ax.legend(loc="best", fontsize=8)
+    ax.grid(alpha=0.3)
+    fig.tight_layout()
+    fig.savefig(PLOTS_DIR / "sharpe_vs_spread_v2.png", dpi=140)
+    plt.close(fig)
+
+
+def _plot_equity_a_vs_b_3bps(portA_all, portB_all, portA_ex, portB_ex) -> None:
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    fig, ax = plt.subplots(figsize=(12, 6))
+    for fr, name, ls, color in (
+        (portA_all, "Regime A (all)", "-", "tab:red"),
+        (portB_all, "Regime B (all)", "-", "tab:blue"),
+        (portA_ex, "Regime A (ex HDFC/HDFCBANK)", "--", "tab:red"),
+        (portB_ex, "Regime B (ex HDFC/HDFCBANK)", "--", "tab:blue"),
+    ):
+        if fr.empty:
+            continue
+        ax.plot(
+            pd.to_datetime(fr["date"]),
+            fr["net_log_ret"].cumsum(),
+            linestyle=ls,
+            color=color,
+            label=name,
+        )
+    ax.axhline(0, color="gray", linewidth=0.5)
+    ax.set_xlabel("Date")
+    ax.set_ylabel("Cumulative net log return")
+    ax.set_title("Phase 3 v2 — A vs B equity curves at 3 bps spread")
+    ax.legend(loc="best", fontsize=9)
+    ax.grid(alpha=0.3)
+    fig.tight_layout()
+    fig.savefig(PLOTS_DIR / "equity_A_vs_B_3bps.png", dpi=140)
+    plt.close(fig)
+
+
+def _print_v2_summary(v2_summary: dict) -> None:
+    print()
+    print("  --- v2 (fill-rate-only) Sharpe vs spread, with/without HDFC/HDFCBANK ---")
+    M = v2_summary["metrics_v2"]
+    if M.empty:
+        print("    (no v2 metrics)")
+        return
+    for regime in ("A", "B"):
+        sub = M[M["regime"] == regime].pivot(
+            index="spread_bps", columns="variant", values="net_sharpe"
+        )
+        sub = sub.sort_index()
+        print(f"    Regime {regime} net Sharpe (spread_bps as rows):")
+        print(sub.to_string(float_format=lambda v: f"{v:+.3f}"))
+    print()
+    print("  --- v2 net ann return % vs spread ---")
+    for regime in ("A", "B"):
+        sub = M[M["regime"] == regime].pivot(
+            index="spread_bps", columns="variant", values="net_ann_pct"
+        )
+        sub = sub.sort_index()
+        print(f"    Regime {regime} net ann %:")
+        print(sub.to_string(float_format=lambda v: f"{v:+.2f}"))
+    print()
+    # A-B gap at 3 bps
+    m3 = M[M["spread_bps"] == 3]
+    if not m3.empty:
+        for variant in ("all", "ex_hdfc_hdfcbank"):
+            sub = m3[m3["variant"] == variant]
+            a = (
+                sub[sub["regime"] == "A"]["net_sharpe"].squeeze()
+                if not sub[sub["regime"] == "A"].empty
+                else float("nan")
+            )
+            b = (
+                sub[sub["regime"] == "B"]["net_sharpe"].squeeze()
+                if not sub[sub["regime"] == "B"].empty
+                else float("nan")
+            )
+            try:
+                gap = float(b) - float(a)
+            except Exception:  # noqa: BLE001
+                gap = float("nan")
+            print(f"  A→B Sharpe gap @ 3 bps ({variant}): {gap:+.3f}")
+    print()
+    # Trade-count multiple vs daily baseline
+    m3_all = m3[(m3["variant"] == "all")] if not m3.empty else m3
+    if not m3_all.empty:
+        for regime in ("A", "B"):
+            row = m3_all[m3_all["regime"] == regime]
+            if row.empty:
+                continue
+            nt = int(row["n_trades"].iloc[0])
+            mult = nt / 198.0
+            print(
+                f"  Trade count Regime {regime} @ 3bps : {nt}  "
+                f"({mult:.1f}× the daily Phase 2A baseline of 198 trades / 7 yrs)"
+            )
+
+
 def _emit_plots(metrics_rows, portfolio_rows, cache, folds) -> None:
     import matplotlib
 
@@ -983,9 +1473,11 @@ def _write_caveats(metrics_rows) -> None:
         "(1) ASSUMED SPREAD, NOT MEASURED. The bid-ask half-spread is the "
         "dominant cost component intraday; the result is a curve over "
         "{1,3,5,8} bps total spread, not a point estimate.",
-        "(2) Intraday CAPACITY is much lower than daily. The target per-pair "
-        "notional is Rs 10 lakh (POC scale); market impact is NOT modeled. "
-        "Scaling beyond this would push the effective spread higher.",
+        "(2) Intraday CAPACITY is much lower than daily. POC notional is "
+        "Rs 50,000 per leg; market impact is NOT modeled. The liquidity "
+        "gate is FILL-RATE-only (>= 90% session fill on both legs); the "
+        "per-minute-volume cap was removed in v2 because at POC scale it "
+        "is a capacity constraint, not a tradeability constraint.",
         "(3) Residual Epps/asynchronicity risk: bars with no trade on either "
         "leg are marked non-tradeable (no forward-fill), but very-low-volume "
         "minutes still embed wider effective spreads.",
