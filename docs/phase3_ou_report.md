@@ -50,6 +50,52 @@ These predictions are explicit so a falsified result is interpretable.
 
 ------------------------------------------------------------------------
 
+## 0.1 Errata + reconciliation note (added on review)
+
+**Best-cell net Sharpe: 0.96 is correct, 1.01 was a misquote.**
+
+- The canonical headline cell is **freq = 5 min, Regime B, cost = 3 bps,
+  stop = none** with **net Sharpe = 0.962** (rounded to 0.96). This is
+  the number from `metrics_ou.csv` row 15 (`spread_bps=3`) and is the
+  number used everywhere in §5 above and §9 below.
+- A "1.01" reference appeared in one close-out draft of §5.2 when
+  comparing rolling_z's best Regime B Sharpe to OU at the **same cost
+  level** for that comparison (cost = 1 bps → OU 1.006 ≈ 1.01). The
+  cost=1 row is not the headline. Every "1.01" reference in this
+  document has been re-anchored to the canonical 3 bps cost ⇒ **0.96**
+  (or the comparison is now explicitly labelled "at cost = 1 bps").
+
+**Two definitions of "universe count" used in this report:**
+
+- "**Pair-folds**" — a `(fold_id, pair_key)` tuple. There are **19**
+  pair-folds after the intraday liquidity gate. The exclusion funnel
+  in §6.8 uses this denominator throughout. One pair (e.g.
+  HDFC/HDFCBANK) can appear in multiple folds and is counted once
+  per fold.
+- "**Unique pair-keys (n_pairs)**" — the `df["pair"].nunique()` count
+  used inside `metrics_ou.csv` / `metrics_rolling_baseline.csv`.
+  Across the 19 pair-folds there are **14 distinct pair-keys**: 5
+  pair-keys span 2 or more folds. This is the column reported as
+  `n_pairs` in every CSV row. The number is **smaller than the
+  pair-fold count** by construction.
+
+For example: the rolling_z baseline carries **all 19 pair-folds** at
+both 5- and 15-min freqs (`_compute_rolling_pair_fold` returns a fit
+for every pair-fold whose test_mask >= window). The metric row's
+`n_pairs = 14` is therefore "14 distinct pair-keys produced at least
+one session record", **not** "14 of 19 pair-folds passed a gate". The
+two counts answer different questions and the report uses both — this
+note exists so the reader can map between them.
+
+For the OU side, the "2 pair-folds" in the best cell are
+`(fold=4, INDUSINDBK/HDFCBANK)` and `(fold=6, KOTAKBANK/HDFCBANK)` —
+2 pair-folds = 2 unique pair-keys (no overlap), so both denominators
+collapse to 2 in that specific cell.
+
+------------------------------------------------------------------------
+
+------------------------------------------------------------------------
+
 ## 1. Design-doc diff summary
 
 `docs/ou_thresholds_design.md` was updated from "Step-3 open questions"
@@ -206,11 +252,12 @@ converted to bars at the active frequency (`window_min / freq_min`,
 floor at 2 bars). `max_holding` likewise converted from
 minute-equivalents (per addendum #5). Thresholds untouched at
 `(entry=2.0, exit=0.5, stop=3.5)`. Costs restamped via
-`_net_pnl_for_cost`. Liquidity gate identical to OU run: **14**
-pair-folds carried at both 5- and 15-min (vs 18 valid AR(1)-fit pair-
-folds for OU; the 14-vs-18 gap is the rolling_z-baseline's stricter
-`test_mask >= window` lower bound, which rejects the 4 short-window
-pair-folds — see §6.8 funnel).
+`_net_pnl_for_cost`. Liquidity gate identical to OU run: **all 19 pair-folds carried** at
+both 5- and 15-min. The metric row's `n_pairs = 14` is the count of
+**unique pair-keys**, not pair-folds — see §0.1 for the two
+definitions. No additional rejections vs the OU exclusion funnel;
+rolling_z runs on every pair-fold whose test_mask has at least one
+window's worth of bars.
 
 ### Gross AND net side-by-side, all cost levels
 
@@ -246,8 +293,11 @@ multi-session reversion.
 (b) **Regime B narrows the gap to OU but does not close it** —
 **CONFIRMED**. At cost=3, freq=5: rolling_z net ann **1.56%** vs OU
 net ann **21.24%** on the same 14-vs-2 pair-fold split. At freq=15:
-rolling_z **3.43%** vs OU **17.81%**. Best rolling-z B cell (5-min,
-1 bps) reaches net Sharpe **0.32**, well below OU's **1.01**. So
+rolling_z **3.43%** vs OU **17.81%**. At cost = 1 bps (best
+rolling-z B cell), net Sharpe **0.318** vs OU at cost = 1 bps net
+Sharpe **1.006** — i.e. a same-cost apples-to-apples gap of ~0.7
+Sharpe units. (The canonical headline at cost = 3 bps is OU 0.96
+vs rolling-z 0.09, also a ~0.9-unit gap.) So
 coarse-bar **aggregation alone delivers a directional B edge**
 (net Sharpe positive at low cost vs v2 1-min B's negative numbers,
 see trade-count table below), **but the engine and the HL-band
@@ -257,21 +307,23 @@ selection together close the rest of the gap to 21%**.
 Bar aggregation alone (rolling_z 5-min vs 1-min) explains the move
 from −10.7% → +1.6% at 3 bps (a ~+12 pt shift); the remaining
 +19.7 pt move to 21.24% comes from the OU engine **on a different
-pair-fold sample** (2 of 14, selected by the HL band). We have not
-isolated engine-only effect on the same 14-pair-fold sample —
-that would require running OU without the HL band on rolling_z's
-14 pair-folds. Flagged in §7.
+pair-fold sample** (2 of 19 pair-folds = 14 unique pair-keys,
+selected by the HL band). A fully clean isolation of engine-only
+effect would require running OU **without** the HL band on the
+broader 19-pair-fold sample. **§5.3 below provides the converse
+slice** — rolling_z restricted to the OU survivors — which is the
+attribution direction we *can* compute from existing artifacts.
 
 ### Trade-count attribution: OU vs v2 1-min vs new coarse rolling_z
 
-| cell                                             | n_pairs | n_trades | net_ann% | net_Sharpe |
-|--------------------------------------------------|--------:|---------:|---------:|-----------:|
-| v2 rolling_z @ 1-min, Regime B, 3 bps (all)      |  19     |  3 446   |   −10.67 |     −0.667 |
-| **NEW** rolling_z @ 5-min, Regime B, 3 bps       |  14     |  1 930   |    +1.56 |      0.092 |
-| **NEW** rolling_z @ 15-min, Regime B, 3 bps      |  14     |    895   |    +3.43 |      0.223 |
-| OU @ 1-min, Regime B, 3 bps                      |   4     |     62   |    +7.07 |      0.355 |
-| OU @ 5-min, Regime B, 3 bps (**best cell**)      |   2     |     34   |   +21.24 |      0.962 |
-| OU @ 15-min, Regime B, 3 bps                     |   2     |     31   |   +17.81 |      0.823 |
+| cell                                             | n_pair-folds | n_unique_pair_keys | n_trades | net_ann% | net_Sharpe |
+|--------------------------------------------------|-------------:|-------------------:|---------:|---------:|-----------:|
+| v2 rolling_z @ 1-min, Regime B, 3 bps (all)      |   19         |      14            |  3 446   |   −10.67 |     −0.667 |
+| **NEW** rolling_z @ 5-min, Regime B, 3 bps       |   19         |      14            |  1 930   |    +1.56 |      0.092 |
+| **NEW** rolling_z @ 15-min, Regime B, 3 bps      |   19         |      14            |    895   |    +3.43 |      0.223 |
+| OU @ 1-min, Regime B, 3 bps                      |    4         |       4            |     62   |    +7.07 |      0.355 |
+| OU @ 5-min, Regime B, 3 bps (**best cell**)      |    2         |       2            |     34   |   +21.24 |      0.962 |
+| OU @ 15-min, Regime B, 3 bps                     |    2         |       2            |     31   |   +17.81 |      0.823 |
 
 Coarse-bar rolling_z does ~50× fewer trades than v2 1-min B (1930 vs
 3446 — and the v2 number is on a 1.36× wider pair-fold base; per-
@@ -279,6 +331,82 @@ pair-fold trades drop ~5-7×). The OU cells trade an additional
 ~50-100× less than rolling_z at the same coarseness, because the
 frozen-μ-OU drift latches each pair-fold into one direction (no
 mean-cross → fewer round-trips).
+
+## 5.3 Attribution slice — OU vs rolling_z on IDENTICAL pair-folds (no new backtests)
+
+Computed by filtering the existing `pair_sessions_rolling_baseline.csv`
+to the **exact two pair-folds** that survived the OU HL band at each
+frequency: `(fold=4, INDUSINDBK/HDFCBANK)` + `(fold=6, KOTAKBANK/HDFCBANK)`.
+Portfolio aggregation: equal-weighted mean across pairs per session
+date (identical convention to script 13 v2 and script 15 OU). Metrics
+via `apt.backtest.walkforward.compute_metrics`.
+
+This is the only attribution direction reconstructable without new
+runs. The complementary slice (OU on rolling_z's full 19-pair-fold
+sample, **without** the HL band) requires a re-run since we have no
+cached `Z-OU` series for the 17 pair-folds outside the band; flagged
+in §7.
+
+### freq = 5 min, Regime B — identical 2 pair-folds, all 4 costs
+
+| cost | engine     | n_trades | gross_total% | net_total% | gross_ann% | net_ann% | gross_Sharpe | net_Sharpe | max_DD% |
+|-----:|------------|---------:|-------------:|-----------:|-----------:|---------:|-------------:|-----------:|--------:|
+|   1  | rolling_z  |    225   |        82.16 |      42.22 |      34.97 |    19.26 |        1.759 |      1.047 |  −11.44 |
+|   1  | OU         |     37   |        56.32 |      50.09 |      25.03 |    22.51 |        1.099 |      1.006 |  −22.33 |
+|   3  | rolling_z  |    225   |        82.16 |      29.98 |      34.97 |    14.01 |        1.759 |      0.781 |  −13.00 |
+|   3  | **OU**     | **34**   |    **54.69** |  **47.00** |  **24.37** | **21.24**|    **1.080** |  **0.962** | **−22.43** |
+|   5  | rolling_z  |    225   |        82.16 |      18.79 |      34.97 |     8.99 |        1.759 |      0.513 |  −15.51 |
+|   5  | OU         |     32   |        51.16 |      42.24 |      22.95 |    19.27 |        1.031 |      0.889 |  −22.52 |
+|   8  | rolling_z  |    225   |        82.16 |       3.79 |      34.97 |     1.88 |        1.759 |      0.110 |  −19.13 |
+|   8  | OU         |     30   |        54.07 |      42.94 |      24.12 |    19.56 |        1.086 |      0.910 |  −22.66 |
+
+### freq = 15 min, Regime B — identical 2 pair-folds, all 4 costs
+
+| cost | engine     | n_trades | gross_total% | net_total% | gross_ann% | net_ann% | gross_Sharpe | net_Sharpe | max_DD% |
+|-----:|------------|---------:|-------------:|-----------:|-----------:|---------:|-------------:|-----------:|--------:|
+|   1  | rolling_z  |     88   |        32.55 |      20.32 |      15.13 |     9.69 |        0.985 |      0.661 |  −14.91 |
+|   1  | OU         |     32   |        43.63 |      38.66 |      19.85 |    17.76 |        0.899 |      0.816 |  −23.27 |
+|   3  | rolling_z  |     88   |        32.55 |      16.16 |      15.13 |     7.78 |        0.985 |      0.539 |  −15.79 |
+|   3  | OU         |     31   |        45.40 |      38.79 |      20.58 |    17.81 |        0.933 |      0.823 |  −23.37 |
+|   5  | rolling_z  |     88   |        32.55 |      12.15 |      15.13 |     5.90 |        0.985 |      0.416 |  −16.81 |
+|   5  | OU         |     30   |        45.45 |      37.39 |      20.60 |    17.21 |        0.941 |      0.805 |  −23.46 |
+|   8  | rolling_z  |     88   |        32.55 |       6.38 |      15.13 |     3.14 |        0.985 |      0.227 |  −18.34 |
+|   8  | OU         |     27   |        44.49 |      35.06 |      20.21 |    16.22 |        0.935 |      0.772 |  −23.60 |
+
+### What the apples-to-apples slice says
+
+**At cost = 1 bps, rolling_z 5-min slightly BEATS OU on net Sharpe
+(1.047 vs 1.006).** The cost-1 result alone would NOT support the
+"OU engine adds edge" claim on this pair-fold sample — the engine
+contribution at low cost is small and the sign depends on cost.
+
+**The OU advantage emerges as cost rises**: at cost = 3 bps, OU
+wins net Sharpe 0.962 vs 0.781 (+0.18). At cost = 8 bps, OU wins
+0.910 vs 0.110 (+0.80). Mechanism is purely trade-frequency: OU
+trades 34 round-trips, rolling_z trades 225 (6.6× more); a fixed
+per-RT cost hits rolling_z 6.6× harder.
+
+**The headline 21.2% / 0.96 number IS reproducible from the same
+two pair-folds under both engines — but the "OU engine adds Sharpe"
+claim is conditional on cost.** At ~1 bps spread it does not; at
+3+ bps it does, and the mechanism is cost amortization (fewer
+trades per unit gross), not threshold optimality. The Bertram solver
+in this dataset is doing **trade-frequency suppression** more than
+threshold *placement* — it widens the band enough to suppress
+~85% of the rolling-z round-trips, and the cost savings dominate.
+
+**Drawdowns**: rolling_z max DDs are ~half of OU's at every cost
+(−11 to −19% vs −22 to −23%), because rolling_z's 225-trade churn
+spreads the directional bias of the drifted spread across many
+short cycles, whereas OU's 17-trade-per-pair-fold sequence carries
+larger single-position excursions.
+
+**Takeaway for §9**: the "OU engine advantage" interpretation should
+be downgraded to "OU is cost-amortization-equivalent to rolling_z at
+~1 bps; the apparent edge at 3+ bps is the cost-frequency interaction,
+not a superior threshold." Section 9 retains the original ordering
+(no-intraday-MR, Regime-A-infeasible, frozen-μ-untenable) — those
+findings are unchanged by this slice.
 
 ## 6. Diagnostics
 
@@ -302,6 +430,23 @@ min), INDUSINDBK/HDFCBANK fold 4 (1200), AMBUJACEM/ACC fold 4
 sessions"), or **collapse Regime A into Regime B** for these
 specific daily-cointegrated pairs whose intraday OU half-lives are
 all multi-session.
+
+**Freq = 1 caveat — DO NOT read the 4 Regime B passes at 1-min as
+evidence of fast intraday reversion.** AR(1) on minute bars is
+contaminated by bid-ask bounce, which inflates the negative
+autocorrelation of one-bar returns and biases the estimated
+reversion speed κ **upward** (equivalently, biases φ down and the
+half-life **down**). The four 1-min "passes" — KOTAKBANK/HDFCBANK
+(HL = 991 min), INDUSINDBK/HDFCBANK (1200), AMBUJACEM/ACC (1657),
+AMBUJACEM/GRASIM (1757) — are all near the 1875-min upper bound,
+and three of the four drop OUT of the band at 5-min (1032 / 1647 /
+2757 / 3096), consistent with microstructure-driven HL inflation
+unwinding as bars coarsen. The HL-ratio §6.2 evidence (ratio drift
+from 0.5 to ~0.8 as freq coarsens) is the macro signature of the
+same effect. **The 1-min results in §5 are reported for
+completeness but should not be cited as "intraday MR" evidence**;
+the 5- and 15-min results are the trustworthy reads of this
+universe at intraday frequencies.
 
 ### 6.2 Intraday-to-daily HL ratio (addendum #4 — observed vs pre-run expectation)
 
