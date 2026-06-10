@@ -85,6 +85,22 @@ signal:
   # The cap keeps capital from being stuck in a slow-mean-reverter for months.
   max_holding_cap_days: 60
   max_holding_half_life_multiplier: 3.0
+  # Phase 3 OU engine — see docs/ou_thresholds_design.md §5.2.
+  # signal.engine == "rolling_z" (default) keeps the v2 path byte-for-byte
+  # untouched. "ou" activates the OU/Bertram engine in scripts/15_phase3_ou.py.
+  engine: "rolling_z"
+  ou:
+    freq_minutes: 1                 # 1 | 5 | 15
+    min_obs: 60                     # AR(1) fit floor
+    half_life_band:
+      A_min_minutes: 30
+      A_max_minutes: 120
+      B_min_minutes: 120
+      B_max_minutes: 1875           # = 5 sessions of 375 trading minutes
+    drift_flag_abs_mean: 0.5        # |test-slice Z-OU mean| > this -> flag
+  stop:
+    mode: "none"                    # "none" | "hard"
+    k_sigma: 4.0                    # |Z-OU| >= K triggers exit if mode='hard'
 
 backtest:
   # Phase 2A walk-forward. Folds = [prior 1008d][train 1008d][test 252d];
