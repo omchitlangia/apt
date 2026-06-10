@@ -94,9 +94,14 @@ def resample_within_session(
     sids = np.asarray(aligned.session_id, dtype=np.int64)
     bin_idx = np.asarray(aligned.bar_in_session, dtype=np.int64)
     coarse_bin = bin_idx // freq_minutes  # within-session coarser-bar index
-    # Group key = (session_id, coarse_bin). Use a composite int key.
+    # Composite int key for (session, coarse_bin). Assumes coarse_bin < 65536.
     key = sids * (1 << 16) + coarse_bin
 
+    # Sort by key to ensure groupby boundaries align with the original order
+    # (it already does since session_id is monotonic and bin_in_session is
+    # monotonic within session, so key is monotonic non-decreasing).
+    # Forward-fill closes within group (vectorised), then take .last() per
+    # group. This avoids the slow .apply(lambda) path.
     df = pd.DataFrame(
         {
             "key": key,
@@ -108,48 +113,29 @@ def resample_within_session(
             "tradeable": aligned.tradeable.astype(bool),
         }
     )
-    # Within each group, take:
-    #   - earliest ts (left label)
-    #   - last finite close_y, close_x
-    #   - any tradeable
-    df_ts = df.groupby("key", as_index=False, sort=True).agg(
+    df["close_y_ff"] = df.groupby("key", sort=False)["close_y"].ffill()
+    df["close_x_ff"] = df.groupby("key", sort=False)["close_x"].ffill()
+
+    grouped = df.groupby("key", sort=True, as_index=False).agg(
         ts=("ts", "first"),
         session_id=("session_id", "first"),
         coarse_bin=("coarse_bin", "first"),
         any_tradeable=("tradeable", "any"),
+        close_y=("close_y_ff", "last"),
+        close_x=("close_x_ff", "last"),
     )
-
-    # Last finite close per group, per leg
-    def _last_finite(series: pd.Series) -> float:
-        vals = series.to_numpy(dtype=float)
-        finite = vals[np.isfinite(vals)]
-        return float(finite[-1]) if finite.size else float("nan")
-
-    closes = (
-        df.groupby("key", sort=True)[["close_y", "close_x"]]
-        .apply(
-            lambda g: pd.Series(
-                {
-                    "close_y": _last_finite(g["close_y"]),
-                    "close_x": _last_finite(g["close_x"]),
-                }
-            )
-        )
-        .reset_index()
-    )
-    out = df_ts.merge(closes, on="key", how="left")
     # Tradeable = any-tradeable AND both legs have finite close
     tradeable_out = (
-        out["any_tradeable"].to_numpy()
-        & np.isfinite(out["close_y"].to_numpy())
-        & np.isfinite(out["close_x"].to_numpy())
+        grouped["any_tradeable"].to_numpy()
+        & np.isfinite(grouped["close_y"].to_numpy())
+        & np.isfinite(grouped["close_x"].to_numpy())
     )
     return ResampledPair(
-        timestamps=pd.DatetimeIndex(out["ts"].values),
-        session_id=out["session_id"].to_numpy(dtype=np.int32),
-        bar_in_session=out["coarse_bin"].to_numpy(dtype=np.int32),
-        close_y=out["close_y"].to_numpy(dtype=float),
-        close_x=out["close_x"].to_numpy(dtype=float),
+        timestamps=pd.DatetimeIndex(grouped["ts"].values),
+        session_id=grouped["session_id"].to_numpy(dtype=np.int32),
+        bar_in_session=grouped["coarse_bin"].to_numpy(dtype=np.int32),
+        close_y=grouped["close_y"].to_numpy(dtype=float),
+        close_x=grouped["close_x"].to_numpy(dtype=float),
         tradeable=tradeable_out.astype(bool),
         freq_minutes=int(freq_minutes),
     )
