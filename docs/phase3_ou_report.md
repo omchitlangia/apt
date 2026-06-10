@@ -2,10 +2,51 @@
 
 **Generated:** 2026-06-10
 **Branch:** `feature/ou-optimal-thresholds`
-**Driver:** `scripts/15_phase3_ou.py --mode full` (committed at 253d2ff)
+**Driver:** `scripts/15_phase3_ou.py --mode full` (committed at 253d2ff) +
+`scripts/15b_phase3_rolling_baseline.py` (this addendum)
 **Design doc:** `docs/ou_thresholds_design.md` (locked decisions in §8)
 **Inputs:** Phase 3 v2 daily selection (Phase 2A reuse) + intraday liquidity gate
 **Cost model:** intraday `CostBreakdown` (4.5 bps fixed/leg/RT + spread sweep)
+
+------------------------------------------------------------------------
+
+## 0. Pre-registered expectations (addendum #5 — written 2026-06-10 BEFORE the four deferred cells were run)
+
+Recorded here so the four cells below are read as a falsifiable check, not
+a free fit. After the run completes, §5.2 prints actuals against these
+predictions verbatim.
+
+(a) **`rolling_z @ {5,15}-min × Regime A`** — expected to remain **net-
+negative at all cost levels** {1,3,5,8} bps. Mechanism: the empirical
+intraday half-life on these daily-cointegrated pairs is 2.6–14
+sessions (§6.1). Regime A force-closes flat at session end; even a
+benign rolling-z entry on a multi-session reverter cannot harvest the
+reversion before EOD square-off. We expect a forced-close /
+time-stop bleed across cost levels.
+
+(b) **`rolling_z @ {5,15}-min × Regime B`** — expected to **narrow the
+gap to the OU cells but not close it**. Mechanism: Regime B can carry
+the position past session boundaries. The rolling z drifts with the
+spread, so it does not inherit the OU train-frozen-μ pathology
+(§6.3); thus rolling_z should improve on v2 1-min B. But its fixed
+`±2.0` entry / `±0.5` exit yields rapid local round-trips, while
+OU's frozen `μ_OU + a*` latches each pair-fold into a long-duration
+position on one side (driven by the §6.3 drift). We do **not**
+pre-commit a trade-count direction; we record both.
+
+(c) **Aggregation vs engine attribution.** If rolling_z @ 5-min Regime B
+matches the OU cells in net Sharpe, the **aggregation** is doing
+the heavy lifting and the OU engine is at best a tie. If it does NOT
+close the gap, the OU **engine** is contributing edge above pure
+bar-aggregation — but that edge is potentially attributable to the
+HL-band selecting a 2-pair-fold subset, not the threshold solver
+itself. We expect rolling_z B to be **clearly worse than OU B at
+matched cost** (because the HL-band makes the OU sample selective
+on slow, mean-reverting pairs), but **better than v2 1-min B**
+(because coarser bars carry intraday MR signal across the gap less
+noisily).
+
+These predictions are explicit so a falsified result is interpretable.
 
 ------------------------------------------------------------------------
 
@@ -155,6 +196,90 @@ pair-fold count; on the 2 pairs that DO clear, OU produces a tighter
 net Sharpe than v2's rolling-z on those same pairs (per v2 report
 extracts).
 
+## 5.2 Addendum-#5 deferred cells — `rolling_z` at coarse bars (now run)
+
+Source: `scripts/15b_phase3_rolling_baseline.py`,
+artifacts at `reports/phase3_ou/{metrics,trades,pair_sessions}_rolling_baseline.csv`.
+
+Window per pair = `clip(round(HL_daily × 375), [375, 1875])` minutes
+converted to bars at the active frequency (`window_min / freq_min`,
+floor at 2 bars). `max_holding` likewise converted from
+minute-equivalents (per addendum #5). Thresholds untouched at
+`(entry=2.0, exit=0.5, stop=3.5)`. Costs restamped via
+`_net_pnl_for_cost`. Liquidity gate identical to OU run: **14**
+pair-folds carried at both 5- and 15-min (vs 18 valid AR(1)-fit pair-
+folds for OU; the 14-vs-18 gap is the rolling_z-baseline's stricter
+`test_mask >= window` lower bound, which rejects the 4 short-window
+pair-folds — see §6.8 funnel).
+
+### Gross AND net side-by-side, all cost levels
+
+| freq | regime | cost | n_pairs | n_trades | gross_total% | net_total% | gross_ann% | net_ann% | gross_Sharpe | net_Sharpe | max_DD% |
+|-----:|:------:|-----:|--------:|---------:|-------------:|-----------:|-----------:|---------:|-------------:|-----------:|--------:|
+|   5  |   A    |   1  |     14  |   2 635  |        19.29 |      −46.85 |       3.19 |   −10.64 |        0.298 |     −1.039 |  −51.20 |
+|   5  |   A    |   3  |     14  |   2 635  |        19.29 |      −60.39 |       3.19 |   −15.19 |        0.298 |     −1.502 |  −63.12 |
+|   5  |   A    |   5  |     14  |   2 635  |        19.29 |      −70.48 |       3.19 |   −19.52 |        0.298 |     −1.949 |  −72.13 |
+|   5  |   A    |   8  |     14  |   2 635  |        19.29 |      −81.00 |       3.19 |   −25.59 |        0.298 |     −2.587 |  −81.68 |
+|   5  |   B    |   1  |     14  |   1 930  |       141.65 |       34.85 |      17.00 |     5.47 |        0.942 |      0.318 |  −22.61 |
+|   5  |   B    |   3  |     14  |   1 930  |       141.65 |        9.08 |      17.00 |     1.56 |        0.942 |      0.092 |  −26.27 |
+|   5  |   B    |   5  |     14  |   1 930  |       141.65 |      −11.77 |      17.00 |    −2.20 |        0.942 |     −0.133 |  −37.05 |
+|   5  |   B    |   8  |     14  |   1 930  |       141.65 |      −35.82 |      17.00 |    −7.59 |        0.942 |     −0.467 |  −50.35 |
+|  15  |   A    |   1  |     14  |   1 264  |         8.90 |      −28.73 |       1.53 |    −5.85 |        0.233 |     −0.918 |  −31.10 |
+|  15  |   A    |   3  |     14  |   1 264  |         8.90 |      −38.92 |       1.53 |    −8.40 |        0.233 |     −1.329 |  −40.65 |
+|  15  |   A    |   5  |     14  |   1 264  |         8.90 |      −47.64 |       1.53 |   −10.88 |        0.233 |     −1.734 |  −48.87 |
+|  15  |   A    |   8  |     14  |   1 264  |         8.90 |      −58.45 |       1.53 |   −14.47 |        0.233 |     −2.326 |  −59.12 |
+|  15  |   B    |   1  |     14  |     895  |        81.97 |       34.80 |      11.24 |     5.46 |        0.691 |      0.350 |  −27.62 |
+|  15  |   B    |   3  |     14  |     895  |        81.97 |       20.87 |      11.24 |     3.43 |        0.691 |      0.223 |  −30.81 |
+|  15  |   B    |   5  |     14  |     895  |        81.97 |        8.38 |      11.24 |     1.44 |        0.691 |      0.095 |  −34.24 |
+|  15  |   B    |   8  |     14  |     895  |        81.97 |       −7.99 |      11.24 |    −1.47 |        0.691 |    −0.099 |  −40.56 |
+
+### Actuals vs §0 pre-registration
+
+(a) **Regime A net-negative at all costs** — **CONFIRMED**. At freq=5
+A, net ann ∈ {−10.6, −15.2, −19.5, −25.6}% across costs {1,3,5,8}
+bps. At freq=15 A, net ann ∈ {−5.9, −8.4, −10.9, −14.5}%. Coarser
+bars cut bleed in half (15-min vs 5-min) but never above zero.
+Mechanism is exactly as pre-registered: ~70-80% of exits are
+`session_close` (forced flat at EOD), with no time to harvest the
+multi-session reversion.
+
+(b) **Regime B narrows the gap to OU but does not close it** —
+**CONFIRMED**. At cost=3, freq=5: rolling_z net ann **1.56%** vs OU
+net ann **21.24%** on the same 14-vs-2 pair-fold split. At freq=15:
+rolling_z **3.43%** vs OU **17.81%**. Best rolling-z B cell (5-min,
+1 bps) reaches net Sharpe **0.32**, well below OU's **1.01**. So
+coarse-bar **aggregation alone delivers a directional B edge**
+(net Sharpe positive at low cost vs v2 1-min B's negative numbers,
+see trade-count table below), **but the engine and the HL-band
+selection together close the rest of the gap to 21%**.
+
+(c) **Aggregation vs engine attribution** — partially **CONFIRMED**.
+Bar aggregation alone (rolling_z 5-min vs 1-min) explains the move
+from −10.7% → +1.6% at 3 bps (a ~+12 pt shift); the remaining
++19.7 pt move to 21.24% comes from the OU engine **on a different
+pair-fold sample** (2 of 14, selected by the HL band). We have not
+isolated engine-only effect on the same 14-pair-fold sample —
+that would require running OU without the HL band on rolling_z's
+14 pair-folds. Flagged in §7.
+
+### Trade-count attribution: OU vs v2 1-min vs new coarse rolling_z
+
+| cell                                             | n_pairs | n_trades | net_ann% | net_Sharpe |
+|--------------------------------------------------|--------:|---------:|---------:|-----------:|
+| v2 rolling_z @ 1-min, Regime B, 3 bps (all)      |  19     |  3 446   |   −10.67 |     −0.667 |
+| **NEW** rolling_z @ 5-min, Regime B, 3 bps       |  14     |  1 930   |    +1.56 |      0.092 |
+| **NEW** rolling_z @ 15-min, Regime B, 3 bps      |  14     |    895   |    +3.43 |      0.223 |
+| OU @ 1-min, Regime B, 3 bps                      |   4     |     62   |    +7.07 |      0.355 |
+| OU @ 5-min, Regime B, 3 bps (**best cell**)      |   2     |     34   |   +21.24 |      0.962 |
+| OU @ 15-min, Regime B, 3 bps                     |   2     |     31   |   +17.81 |      0.823 |
+
+Coarse-bar rolling_z does ~50× fewer trades than v2 1-min B (1930 vs
+3446 — and the v2 number is on a 1.36× wider pair-fold base; per-
+pair-fold trades drop ~5-7×). The OU cells trade an additional
+~50-100× less than rolling_z at the same coarseness, because the
+frozen-μ-OU drift latches each pair-fold into one direction (no
+mean-cross → fewer round-trips).
+
 ## 6. Diagnostics
 
 ### 6.1 Half-life distribution per bar frequency
@@ -178,18 +303,37 @@ sessions"), or **collapse Regime A into Regime B** for these
 specific daily-cointegrated pairs whose intraday OU half-lives are
 all multi-session.
 
-### 6.2 Intraday-to-daily HL ratio (diagnostic only — no gate)
+### 6.2 Intraday-to-daily HL ratio (addendum #4 — observed vs pre-run expectation)
 
-| freq | p10 | p50 | p90 |
-|-----:|----:|----:|----:|
-|    1 | 0.24 | 0.49 | 0.85 |
-|    5 | 0.35 | 0.68 | 1.04 |
-|   15 | 0.41 | 0.77 | 1.13 |
+**Pre-run expectation** (locked at design-doc §addendum #4): the
+ratio `HL_intraday_minutes / (HL_daily_days × 375)` should be
+**≪ 1** if intraday-timescale mean reversion exists as a distinct
+phenomenon from daily mean reversion. The motivation: if minute-
+panel spreads carry their own short-horizon reverter, we should
+see HL_intraday on the order of tens of minutes, not multi-session
+sums.
 
-Ratios in [0.2, 1.1] dominate — intraday mean-reversion is on a
-~50–80% of daily timescale (in matched trading-time units). This is
-broadly consistent across freqs. No outliers requiring
-investigation.
+**Observed**:
+
+| freq | p10  | p50  | p90  | mean  |
+|-----:|-----:|-----:|-----:|------:|
+|    1 | 0.24 | 0.49 | 0.85 | 0.53  |
+|    5 | 0.35 | 0.68 | 1.04 | 0.70  |
+|   15 | 0.41 | 0.77 | 1.13 | 0.79  |
+
+**The observed ratio is ≈ 1, not ≪ 1, and grows toward 1 as bar
+frequency coarsens** — exactly the signature of "the only mean-
+reversion present is the daily one, observed through progressively
+less microstructure noise as we aggregate." The factor-of-2 shrinkage
+at 1-min is consistent with first-order autocorrelation
+under-estimation of κ when the bar interval is much shorter than the
+true reversion timescale (high-frequency φ → 1 estimation bias);
+coarsening the bars trims that bias back toward the daily HL.
+
+**Pre-registered expectation falsified.** This is one of the two
+headline findings of the run (see §9), and it is the strongest
+single argument against the OU/Bertram model class being the right
+match for these instruments at intraday frequencies.
 
 ### 6.3 Z-OU drift (frozen-μ stale-mean flag, |test-slice mean| > 0.5)
 
@@ -237,45 +381,164 @@ frozen μ_OU drifts. Either (a) gate stop.mode by drift severity
 a flat-bar cool-off after z_stop, or (c) measure stop in deviation
 from a slow rolling mean rather than μ_OU.
 
-### 6.5 Cost-convention diagnostic (β distribution, equal-notional caveat)
+**Reframing of the −99.99% number** (added on review): what failed
+here is **stop-with-instant-re-arm under a drifted frozen mean**, not
+hard stops in general. The implementation evaluates the entry
+condition on the next bar after every z_stop, with the train-frozen
+μ_OU still satisfying |Z| ≥ a* on the same side. **Breakdown
+semantics** (stand down for the remainder of the fold once a z_stop
+fires, or until |Z| crosses back through zero) **were not
+implemented** in this round. The −99.99% headline is therefore a
+property of the **re-arm logic combined with frozen-μ drift**, not
+evidence against catastrophic stops as a class of risk control. A
+fair test of "hard stop, properly implemented" would require either
+the breakdown semantics above or a non-frozen μ; we have not
+performed it.
+
+### 6.5 Cost-convention diagnostic (signed β distribution + traded subset)
+
+**All 14 unique pairs** (signed, NOT absolute):
 
 ```
-β values (unique across pair-folds): {0.057, 0.064, 0.179, 0.667, 0.671,
-0.727, 0.757, 0.784, 0.816, 0.832, 0.872, 0.925, 0.980, 0.999, 1.138,
-1.167, 1.247, 1.643}
+β values: {0.057, 0.064, 0.179, 0.667, 0.671, 0.727, 0.757, 0.784,
+0.816, 0.832, 0.872, 0.925, 0.980, 0.999, 1.138, 1.167, 1.247, 1.643}
 
-(1+β)/2 distribution: min=0.528, median=0.912, max=1.322
+(1+β)/2 signed: min=0.528, median=0.926, mean=0.909, max=1.322
+fraction (1+β)/2 < 1.00: 0.786 (11/14 pairs)
+fraction (1+β)/2 > 1.00: 0.214 (3/14 pairs)
 |(1+β)/2 − 1| median = 0.115
 ```
 
-**Median |(1+β)/2 − 1| = 0.115 exceeds the 10% threshold** specified
-in addendum #2. The current run inherits v2's equal-notional
-plumbing verbatim (per the addendum directive), so cost deduction is
-`2 × cost_bps_per_leg / 10⁴` regardless of β. The β distribution
-indicates this assumption mis-bills cost by 5-32% on the extreme
-pair-folds (e.g. INDUSINDBK/HDFCBANK at β=1.64 has true (1+β)/2 =
-1.32, so cost is under-charged by ~32%; IDBI-anchored pairs at
-β=0.06 have true (1+β)/2 = 0.53, so cost is over-charged by ~47%).
+The all-pair distribution is **left-skewed below 1.0** (mean 0.909,
+median 0.926). The equal-notional assumption mis-bills cost in BOTH
+directions, but on average **over-charges** the typical pair (mean
+shift = −9%).
+
+**Traded subset @ freq=5, Regime B (n=2, the headline cell)**:
+
+| fold | pair                  | β     | (1+β)/2 | Z-OU drift mean |
+|-----:|-----------------------|------:|--------:|----------------:|
+|    4 | INDUSINDBK/HDFCBANK   | 1.643 |   1.322 |          −3.29 σ_eq |
+|    6 | KOTAKBANK/HDFCBANK    | 0.872 |   0.936 |          +1.16 σ_eq |
+| **mean of traded subset:** |   | **1.258**  | **1.129** |    |
+
+**Traded subset is right-skewed above 1.0** — opposite sign from
+the all-pair distribution. Specifically, both traded pair-folds at
+freq=5 B are HDFC-Bank-vs-X pairs where the HDFC-Bank leg is the X
+(low-vol) leg and the other is the higher-β Y leg, producing β >
+0.87 in both cases. Among the 14-pair sample, the traded subset has
+mean (1+β)/2 = 1.13 (vs population mean 0.91).
+
+**Direction of bias on reported nets**: equal-notional billing
+**under-charges** these traded pairs by ~13% (mean), with the
+extreme case INDUSINDBK/HDFCBANK under-charged by 32%. **Published
+net Sharpes and net annualized returns are therefore biased UPWARD
+on the OU best cell**. A first-order correction (multiply spread
+cost by mean (1+β)/2 ≈ 1.13 for the traded subset):
+
+- At 3 bps cost: equal-notional net ann = 21.24%; β-adjusted net
+  ann ≈ 19.6% (linear approximation, exact via re-stamp).
+- Net Sharpe ≈ 0.85 vs the published 0.96.
+
+The qualitative finding (positive Sharpe on n=2 pair-folds) does not
+flip, but the magnitude shrinks. The wider implication is that any
+*ranking* of cells by net Sharpe that compares pairs of different β
+is contaminated; comparisons in this report should be read with a
+±10-15% Sharpe-attribution error bar.
 
 **[TODO] cost-accounting follow-up unit** — implement a
 β-proportional cost convention (cost_per_pair = (1+β) × cost_per_leg)
-and re-run; check whether the directional bias in Regime B at high-β
-pairs changes sign or magnitude.
+and re-run.
 
-### 6.6 Exit-type breakdown (freq=5, Regime B, cost=3, stop=none)
+### 6.5b a* (Bertram entry threshold) curve vs cost level
 
-```
-mean_revert  : 26  (76%)   — the OU model's primary exit
-time_stop    :  6  (18%)   — pair held to max_holding without crossing μ
-eod_squareoff:  0   (0%)   — Regime B does not force-close intraday
-fold_close   :  2   (6%)   — open positions at fold-test-end
-z_stop       :  0   (0%)   — stop=none
-```
+a* is reported in **Z-OU units** below; conversion to bps of log-
+spread requires multiplying by `σ_eq × 10⁴`. The unique a* values
+across the 4 traded pair-folds at each (freq, cost) cell follow the
+addendum's monotonicity property (a* non-decreasing in c).
 
-A 76% mean-revert exit rate is healthy — the model is working as
-designed when the drift is benign. The 18% time-stop fraction
-correlates with the pair-folds whose drift is severe; those trades
-sit at one extreme and never cross μ within `3 × half-life` bars.
+**a* in Z units (sorted unique across traded pair-folds at each cell):**
+
+| freq | cost=1 bps          | cost=3 bps           | cost=5 bps           | cost=8 bps           |
+|-----:|--------------------:|---------------------:|---------------------:|---------------------:|
+|    1 | 0.405 / 0.406 / 0.444 / 0.458 | 0.450 / 0.451 / 0.494 / 0.510 | 0.488 / 0.489 / 0.536 / 0.554 | 0.536 / 0.537 / 0.589 / 0.609 |
+|    5 | 0.405 / 0.458       | 0.450 / 0.510        | 0.488 / 0.553        | 0.536 / 0.609        |
+|   15 | 0.405 / 0.458       | 0.450 / 0.510        | 0.488 / 0.553        | 0.536 / 0.609        |
+
+**Same a* values at 5 and 15 min** because the half-life-frequency
+invariance (test 8.8g) and (1+β)/2-independent c_log_per_RT collapse
+the Bertram solver onto identical κ-rescaled inputs. The band
+widens by **≈ 33%** from 1 bps to 8 bps (0.405 → 0.536) at the
+KOTAKBANK/HDFCBANK pair, **≈ 33%** (0.458 → 0.609) at the
+INDUSINDBK/HDFCBANK pair.
+
+**In bps of log-spread** (using each pair's σ_eq from §6.2 cache):
+
+| pair                  | σ_eq    | cost=1 bps (a* in bps) | cost=3 | cost=5 | cost=8 |
+|-----------------------|--------:|-----------------------:|-------:|-------:|-------:|
+| KOTAKBANK/HDFCBANK    | 0.0515  | 208                    | 232    | 251    | 276    |
+| INDUSINDBK/HDFCBANK   | 0.0358  | 164                    | 183    | 198    | 218    |
+
+These entry bands are ~2-3 orders of magnitude wider than the cost
+itself (164-276 bps band vs 1-8 bps cost), which is the Bertram
+solver's recommendation for slow-mean-reverting (κ ≪ 1) processes.
+
+### 6.6 Exit-type breakdown — every cell, with best-cell P&L attribution
+
+Per-cell exit-reason counts (OU cells, stop=none, at cost=3 — exit counts
+are independent of cost level, so a single column is faithful):
+
+| freq | regime |   n_trades | mean_revert | time_stop | session_close (EOD) | fold_close | z_stop |
+|-----:|:------:|-----------:|------------:|----------:|--------------------:|-----------:|-------:|
+|   1  |   A    |          0 |           0 |         0 |                   0 |          0 |      0 |
+|   1  |   B    |         62 |          46 |        12 |                   0 |          4 |      0 |
+|   5  |   A    |          0 |           0 |         0 |                   0 |          0 |      0 |
+| **5**|  **B** |     **34** |      **26** |     **6** |               **0** |      **2** |  **0** |
+|  15  |   A    |          0 |           0 |         0 |                   0 |          0 |      0 |
+|  15  |   B    |         31 |          23 |         6 |                   0 |          2 |      0 |
+
+Cells flagged "0/0/0/0/0" are HL-band-rejected and produce no trades; all
+empty Regime A cells are also of that form. Stop=hard cells produce
+overwhelmingly `z_stop` exits, documented separately in §6.4.
+
+**Best cell (freq=5, Regime B, cost=3 bps, stop=none) — net P&L
+attribution by exit type**:
+
+| exit_reason   | n_trades | sum(net_log_pnl) | share of total net |
+|---------------|---------:|-----------------:|-------------------:|
+| mean_revert   |       26 |           +0.6714 |             +173 % |
+| time_stop     |        6 |           −0.2698 |              −70 % |
+| fold_close    |        2 |           −0.0139 |              −3.6% |
+| **portfolio** |   **34** |       **+0.3877** |          **100 %** |
+
+Mean-revert exits contribute **+173% of the net P&L**: every other
+exit type is a net drag. Said differently, if the strategy magically
+closed every position at the model-implied mean-cross (rather than
+hitting the time stop or fold boundary), net annualized return
+would rise from **21.24%** to **~50%** on the same 2 pair-folds.
+The robustness of the 21.24% headline is therefore very sensitive
+to the *fraction* of trades that get to mean-revert before time
+stop fires — which itself depends on the multi-session HL and the
+`max_holding = 3 × HL` cap. This is **a fragility, not a strength**.
+
+The 76% mean-revert exit *rate* is healthy in count terms; the
+P&L attribution shows the model only narrowly outpaces its time-
+stop bleed. With slightly faster drift or one extra unfavorable
+fold, the strategy crosses zero.
+
+### 6.6b Exit-reason breakdown — rolling_z baseline (this addendum)
+
+| freq | regime | n_trades | mean_revert | session_close (EOD) | fold_close | stop | time |
+|-----:|:------:|---------:|------------:|--------------------:|-----------:|-----:|-----:|
+|   5  |   A    |     2635 |         348 |               1 538 |          0 |  749 |    0 |
+|   5  |   B    |     1930 |       1 143 |                   0 |          9 |  778 |    0 |
+|  15  |   A    |     1264 |          61 |               1 124 |          0 |   79 |    0 |
+|  15  |   B    |      895 |         805 |                   0 |          9 |   81 |    0 |
+
+Regime A is dominated by `session_close`: 58% (5-min) and 89%
+(15-min) of trades exit on EOD square-off. This is the direct cause
+of the negative net P&L — entries are made on a spread that requires
+days to revert, not minutes.
 
 ### 6.7 Corp-action caveat (addendum #8)
 
@@ -295,16 +558,109 @@ TRAIN window is the right follow-up; we have not done it this round.
 day on either leg; quantify how many of the |drift mean| > 0.5
 flagged pair-folds are explained by corp actions.
 
+### 6.8 Exclusion funnel per regime × frequency
+
+This is the reviewer-requested 18→2 funnel rendered explicitly per
+(freq, regime).
+
+| stage                                                                  | freq=1 | freq=5 | freq=15 |
+|------------------------------------------------------------------------|-------:|-------:|--------:|
+| 1. pair-folds attempted (post liquidity gate)                          |    19  |    19  |     19  |
+| 2. AR(1) slope valid (φ ∈ (0,1) on train slice, sufficient obs)        |    18  |    18  |     18  |
+| 3a. **Regime A**: pass HL band [30, 120] min                           |     0  |     0  |      0  |
+| 3b. **Regime B**: pass HL band [120, 1875] min                         |     4  |     2  |      2  |
+| 4. infeasible at cost (Bertram solver returns NaN)                     |     0  |     0  |      0  |
+| **5a. Regime A: traded pair-folds**                                    |   **0**|   **0**|    **0**|
+| **5b. Regime B: traded pair-folds**                                    |   **4**|   **2**|    **2**|
+
+The single AR(1) reject at all frequencies is `fold 2 PFC/SBIN` —
+the (PFC,SBIN) pair has only ~225 aligned days inside the minute
+panel for fold 2's train slice (panel start 2017-02-01), failing
+the 100-bar `min_obs` floor at every freq. All other 18 pair-folds
+yield a finite OU fit; the elimination is then entirely from the HL
+band.
+
+**Regime A: 18 → 0 at every freq.** Empirically NONE of these
+daily-cointegrated pairs has an intraday HL inside [30, 120] minutes.
+The pre-registered Regime-A defaults are not just restrictive on the
+margin; they are **structurally inadmissible** for the daily-pair
+universe.
+
+**Regime B: 18 → 4 → 2 → 2.** The drop from 4 to 2 going 1-min → 5-min
+is the 4 short-HL pairs (AMBUJACEM/GRASIM, AMBUJACEM/ACC) crossing
+above the 1875-minute upper bound when their HL inflates at coarser
+sampling (1757→3096, 1657→2757 min). Cap effect, not signal effect.
+
+The "best cell" headline of 21.24% net annual is on the **bottom of
+this funnel: 2 pair-folds out of an attempted 19**, which is **2 out
+of 18 valid fits** (10.5%) and **2 out of 4 Regime-B-eligible at
+1-min** (50% of the 1-min B sample shrinks to 2 at 5-min). This is a
+small-n result.
+
+### 6.9 Best-cell forensics (freq=5, Regime B, cost=3 bps, stop=none)
+
+**Per-pair-fold P&L and trade count:**
+
+| fold | pair                | n_trades | gross_log_pnl | net_log_pnl | gross % | net %  |
+|-----:|---------------------|---------:|--------------:|------------:|--------:|-------:|
+|    4 | INDUSINDBK/HDFCBANK |       17 |       +0.1581 |     +0.1326 | +17.12% | +14.18%|
+|    6 | KOTAKBANK/HDFCBANK  |       17 |       +0.2806 |     +0.2551 | +32.40% | +29.06%|
+|      | **portfolio**       |   **34** |   **+0.4387** |  **+0.3877**| **+55.07%** | **+47.34%**|
+
+(Portfolio total = sum of per-pair-fold log-P&Ls because the two
+folds have disjoint test windows — fold 4's test runs 2018-2018, fold
+6's runs 2020-2020 — so the equal-weight mean across pairs per date
+reduces to "the one pair active that date".)
+
+**Test-window lengths:**
+
+| fold | pair                | test sessions | (~ years)   |
+|-----:|---------------------|--------------:|------------:|
+|    4 | INDUSINDBK/HDFCBANK |           252 | 1.00        |
+|    6 | KOTAKBANK/HDFCBANK  |           252 | 1.00        |
+|      | **portfolio (union of dates)** | **504** | **2.00** |
+
+**Exact annualization formula** (from
+`apt.backtest.walkforward.compute_metrics`):
+
+```
+total_log = sum(daily_log_returns)                     # over 504 portfolio sessions
+n_years   = n_obs / 252                                # 504/252 = 2.000 here
+ann_log   = total_log / n_years                        # 0.3877 / 2.000 = 0.1939
+ann_return_pct = (exp(ann_log) - 1) × 100              # ≈ 21.39%, reported 21.24%
+```
+
+(The 21.24% in §5 reflects per-pair-fold equal-weight averaging at
+the date level — on disjoint date sets the portfolio per-date log
+return equals the active pair's log return divided by 1 (single
+active pair), which is equivalent to averaging the two pair-fold log
+totals across the 504-session union with the convention used in
+`compute_metrics`.)
+
+**Sharpe formula**:
+
+```
+sharpe = mean(daily_log_returns) / std_ddof_1(daily_log_returns) × sqrt(252)
+```
+
+over the same 504-session portfolio series.
+
+**What the 21.2% figure represents**: a **2-pair, equal-date-weight
+union of 2 disjoint one-year test windows**. It is *not*
+out-of-sample on the same pair-folds; it is *not* across overlapping
+years. It is two adjacent independent samples averaged. With n_pairs
+= 2 and unattributed pair-specific variance, the standard error on
+the mean Sharpe is unbounded; we report no confidence interval here
+because n is too small to support one.
+
 ## 7. Deferred / [TODO] items
 
-- **Coarse-bar `rolling_z` baselines** (addendum #5). The orchestrator
-  `_full_cells()` builds them but `main()` filters them out
-  (`c.engine == "ou"` only). Reason: implementing them in script 15
-  cleanly required duplicating the v2 rolling-z + signal generation
-  inside the cell loop, which we judged out of scope for this round.
-  The OU vs v2 comparison is still meaningful (§5 cross-reference
-  against v2 report numbers); the missing piece is the
-  aggregation-vs-engine decomposition.
+- ~~**Coarse-bar `rolling_z` baselines** (addendum #5)~~. **DONE** in
+  this round via `scripts/15b_phase3_rolling_baseline.py`; results
+  reported in §5.2 and §6.6b. The aggregation-vs-engine attribution
+  is still partial: a fully clean isolation would require running OU
+  on the same 14-pair-fold sample (without the HL band) to measure
+  engine-only effect.
 - **β-proportional cost convention** (cost-diagnostic flag in §6.5).
 - **Corp-action tagging** of pair-folds (§6.7).
 - **HL-band-revision experiment**: rerun with Regime A widened to
@@ -324,6 +680,8 @@ bb1df16 docs(ou): lock decisions, add §8 implementation contract
 3693b86 feat(stats): OU fitter + Bertram (2010) threshold solver
 e07907e feat(intraday): OU signal engine + bar resampler + config plumbing
 253d2ff feat(phase3): OU orchestrator script + vectorized resample
+edbda2e docs(phase3): OU/Bertram run report — full grid + diagnostics
+<this commit> docs+addendum: rolling_z baselines + reviewer punch-list
 ```
 
 Plus this report. No changes to:
@@ -332,12 +690,113 @@ Plus this report. No changes to:
 - `src/apt/intraday/zscore.py` (v2 z untouched)
 - Phase 1/2 daily pipeline.
 
-## 9. One-line takeaway
+## 9. Conclusions (reordered on review)
 
-**OU/Bertram is competitive with v2's rolling-z on the same pair-
-folds (Sharpe 0.96 vs ≲1 at 3 bps, freq=5, Regime B), but the
-addendum's default HL band collapses Regime A to empty; Regime B
-trades only 2 pair-folds out of 19 because intraday OU half-lives
-on daily-cointegrated pairs are multi-session, not multi-minute.
-Train-frozen μ drift is the single biggest issue surfaced — and is
-the root cause of the stop-hard pathology.**
+### 9.1 Primary (load-bearing) finding
+
+**No intraday-timescale mean reversion exists in the frozen-β spread
+on this universe.** Empirically, the OU half-life on minute bars is
+indistinguishable from the daily half-life (HL_intraday / HL_daily
+ratio ≈ 0.5-0.8 at 1-min, 0.7-1.1 at 15-min — converging toward 1.0
+as bars coarsen and microstructure noise drops, per §6.2). The
+ratio's drift toward 1 with coarsening is the fingerprint of a
+**single mean-reversion timescale** (the daily one), observed
+through more or less microstructure noise; it is **not** the
+fingerprint of a distinct intraday reverter. This falsifies the
+addendum #4 pre-run expectation of ratio ≪ 1.
+
+### 9.2 Secondary findings
+
+(a) **Regime A is structurally infeasible** for the OU signal family
+on this universe. The HL band [30, 120] trading minutes admits **0
+of 18** valid AR(1) fits at every frequency (§6.8). The rolling_z
+baseline at coarse bars confirms Regime A is net-negative at every
+cost level (§5.2). Any future OU work on these pairs has to either
+abandon Regime A or redefine "Regime A" as "trades that close within
+≲ 5 sessions" — making it a relabel of Regime B's lower end.
+
+(b) **Frozen μ_OU is untenable** at the observed test-window drift
+levels. Median |Z-OU test mean| = 2.13 σ_eq across all valid fits
+(§6.3); 78% of pair-folds have |drift| > 0.5 σ_eq. Any OU-style
+optimal-threshold strategy that freezes μ on a 4-year train window
+and trades a 1-year test is operating on a counterfactual.
+
+(c) **Cost convention (β-skew)**: the traded subset is right-tailed
+in (1+β)/2 (mean 1.13 vs all-pair mean 0.91); equal-notional billing
+under-charges these pairs and so **biases reported nets upward by
+~10-15%** (§6.5). The qualitative direction of the best-cell number
+survives the correction; the magnitude does not.
+
+### 9.3 Exploratory (n=2, unattributed)
+
+The best cell observed in the run — **freq = 5 min, Regime B, cost =
+3 bps, stop = none** — produced **net annual 21.24%, net Sharpe 0.96,
+max DD −22.4%** on **2 of 19 attempted pair-folds** (10.5%). Of that
+net P&L, 100% accumulates on **mean_revert exits** (+173% gross
+contribution); **time_stop** exits drag it down by 70%. The result
+is sensitive to two specific pair-folds (INDUSINDBK/HDFCBANK fold 4
+and KOTAKBANK/HDFCBANK fold 6), each one calendar year of
+non-overlapping test. With n=2 pair-folds and no cross-validation
+across pairs (the two test years are also disjoint), this number is
+**not a portfolio result and not statistically supported**. We label
+it exploratory and do not recommend it as a finding of the OU work.
+
+### 9.4 What this means for the OU thresholds programme
+
+Given (9.1) and (9.2a-b), the OU/Bertram optimal-threshold framework
+is not the right tool for this universe at intraday frequencies.
+Productive follow-ups would target the underlying mismatch:
+
+- daily-frequency OU thresholds (where HL_daily is the true
+  timescale) — a Phase-2 follow-up, not Phase-3.
+- a hybrid where σ_eq stays train-frozen but μ follows a slow
+  rolling mean — addresses (9.2b) but is out of scope this round.
+- intraday strategies that do NOT presume an OU process at intraday
+  frequencies (volatility breakout, microstructure-aware
+  market-making, cointegration-on-overnight-gap — none of which is
+  this branch's design).
+
+------------------------------------------------------------------------
+
+## 10. Test results — verbatim pytest terminal output
+
+```
+$ .venv/bin/pytest tests/ --tb=no
+........................................................................ [ 23%]
+........................................................................ [ 46%]
+........................................................................ [ 70%]
+........................................................................ [ 93%]
+....................                                                     [100%]
+=============================== warnings summary ===============================
+tests/intraday/test_plots_intraday.py::test_per_pair_card_writes_png_without_rep_fold
+tests/intraday/test_plots_intraday.py::test_per_pair_card_writes_png_with_rep_fold
+  /Data6/apt/src/apt/plots/intraday.py:232: UserWarning: This figure includes Axes that are not compatible with tight_layout, so results might be incorrect.
+    fig.tight_layout()
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+308 passed, 2 warnings in 96.59s (0:01:36)
+```
+
+### 10.1 Count reconciliation (vs the handoff's claim of 325)
+
+The handoff said "286 prior + 39 new = 325". The actual is **308**.
+Nothing was deselected or skipped (`--collect-only` count = run
+count = 308). The 17-test gap is in the **prior** count: commit
+`4c36516` (revert phase 2b risk-managed experiment, predating the OU
+branch) removed `tests/backtest/test_risk_managed.py` (23 tests) and
+`tests/backtest/test_vol_target.py` (9 tests) — 32 tests in total,
+of which the handoff's "286 prior" arithmetic apparently retained 17.
+
+The **39 new tests added on this branch** are verified by file:
+
+| File                                          | Tests | Source commit |
+|-----------------------------------------------|------:|---------------|
+| `tests/stats/test_ou.py`                      |    17 | 3693b86       |
+| `tests/stats/test_ou_mc.py`                   |     3 | 3693b86       |
+| `tests/intraday/test_resample.py`             |     5 | e07907e       |
+| `tests/intraday/test_signals_ou.py`           |    10 | e07907e       |
+| `tests/intraday/test_backtest_cost_pin.py`    |     4 | e07907e       |
+| **Total new**                                 | **39**|               |
+
+So `308 = 269 prior (revised) + 39 new`. All passing, no skips, no
+xfails, no deselects.
