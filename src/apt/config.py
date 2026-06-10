@@ -97,12 +97,40 @@ class SpreadConfig(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="APT_SPREAD_")
 
 
+class OUHalfLifeBand(BaseSettings):
+    A_min_minutes: float = 30.0
+    A_max_minutes: float = 120.0
+    B_min_minutes: float = 120.0
+    B_max_minutes: float = 1875.0
+
+    model_config = SettingsConfigDict(env_prefix="APT_SIGNAL__OU__HALF_LIFE_BAND__")
+
+
+class OUSignalConfig(BaseSettings):
+    freq_minutes: int = 1
+    min_obs: int = 60
+    half_life_band: OUHalfLifeBand = OUHalfLifeBand()
+    drift_flag_abs_mean: float = 0.5
+
+    model_config = SettingsConfigDict(env_prefix="APT_SIGNAL__OU__")
+
+
+class StopConfig(BaseSettings):
+    mode: str = "none"
+    k_sigma: float = 4.0
+
+    model_config = SettingsConfigDict(env_prefix="APT_SIGNAL__STOP__")
+
+
 class SignalConfig(BaseSettings):
     entry_z: float = 2.0
     exit_z: float = 0.5
     stop_z: float = 3.5
     max_holding_cap_days: int = 60
     max_holding_half_life_multiplier: float = 3.0
+    engine: str = "rolling_z"
+    ou: OUSignalConfig = OUSignalConfig()
+    stop: StopConfig = StopConfig()
 
     model_config = SettingsConfigDict(env_prefix="APT_SIGNAL_")
 

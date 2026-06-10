@@ -158,4 +158,189 @@ def generate_signals_two_regime(
     return IntradaySignalSeries(position=pos, days_in_trade=held, exit_reason=er, regime=regime)
 
 
-__all__ = ["IntradaySignalSeries", "generate_signals_two_regime"]
+def _generate_signals_ou_one_session(
+    z_ou: np.ndarray,
+    tradeable: np.ndarray,
+    *,
+    a_entry_z: float,
+    stop_mode: str,
+    stop_k_sigma: float,
+    max_holding: int,
+    force_close_at_last_tradeable: bool,
+) -> SignalSeries:
+    """OU state machine on one session slice (or one continuous span)."""
+    n = z_ou.size
+    pos = np.zeros(n, dtype=np.int8)
+    held = np.zeros(n, dtype=np.int32)
+    er: list = [None] * n
+
+    use_hard_stop = stop_mode == "hard"
+    cur_pos = 0
+    cur_held = 0
+
+    for t in range(n):
+        z = float(z_ou[t]) if np.isfinite(z_ou[t]) else float("nan")
+        if not np.isfinite(z):
+            # NaN bar: carry state, do not increment held, no exit
+            pos[t] = cur_pos
+            held[t] = cur_held
+            continue
+
+        if cur_pos == 0:
+            # Flat -> consider entry on tradeable bars
+            if z >= a_entry_z:
+                cur_pos = -1  # short spread (spread overpriced)
+                cur_held = 0
+            elif z <= -a_entry_z:
+                cur_pos = +1  # long spread
+                cur_held = 0
+            pos[t] = cur_pos
+            held[t] = cur_held
+            if cur_pos != 0:
+                cur_held = 1  # next bar will be the first bar held
+        else:
+            cur_held += 1
+            # Check exits in priority order
+            if cur_pos == -1:
+                if use_hard_stop and z >= stop_k_sigma:
+                    er[t] = "z_stop"
+                    cur_pos = 0
+                    cur_held = 0
+                elif z <= 0.0:
+                    er[t] = "mean_revert"
+                    cur_pos = 0
+                    cur_held = 0
+                elif cur_held - 1 >= max_holding:
+                    er[t] = "time_stop"
+                    cur_pos = 0
+                    cur_held = 0
+            else:  # cur_pos == +1
+                if use_hard_stop and z <= -stop_k_sigma:
+                    er[t] = "z_stop"
+                    cur_pos = 0
+                    cur_held = 0
+                elif z >= 0.0:
+                    er[t] = "mean_revert"
+                    cur_pos = 0
+                    cur_held = 0
+                elif cur_held - 1 >= max_holding:
+                    er[t] = "time_stop"
+                    cur_pos = 0
+                    cur_held = 0
+            pos[t] = cur_pos
+            held[t] = cur_held if cur_pos != 0 else 0
+
+    if force_close_at_last_tradeable and cur_pos != 0:
+        last_tradeable = np.flatnonzero(tradeable)
+        if last_tradeable.size:
+            last = int(last_tradeable[-1])
+            pos[last:] = 0
+            if er[last] is None:
+                er[last] = "session_close"
+            held[last:] = 0
+
+    return SignalSeries(position=pos, days_in_trade=held, exit_reason=er)
+
+
+def generate_signals_ou(
+    z_ou: np.ndarray,
+    session_id: np.ndarray,
+    tradeable: np.ndarray,
+    *,
+    regime: str,
+    a_entry_z: float,
+    stop_mode: str = "none",
+    stop_k_sigma: float = 4.0,
+    max_holding: int,
+) -> IntradaySignalSeries:
+    """OU-engine drop-in replacement for :func:`generate_signals_two_regime`.
+
+    State machine evaluated on each completed bar's ``z_ou[t] = (X[t] -
+    mu_OU) / sigma_eq`` (TRAIN-frozen ``mu_OU``, ``sigma_eq``):
+
+    * flat -> short when ``z_ou >= +a_entry_z``
+    * flat -> long  when ``z_ou <= -a_entry_z``
+    * short -> flat when ``z_ou <= 0`` (``mean_revert``)
+                    OR ``z_ou >= +stop_k_sigma`` (``z_stop``,
+                       only if ``stop_mode == "hard"``)
+                    OR ``held >= max_holding`` (``time_stop``)
+    * long  -> flat: mirror of short.
+
+    Regime A: per-session, force-close at the last tradeable bar of the
+    session with ``exit_reason='session_close'`` (CSV emits this as
+    ``eod_squareoff``). Regime B: continuous; the orchestrator handles
+    fold-boundary close.
+    Re-entry: state-machine fires immediately on the next bar that
+    triggers an entry condition once flat — no cool-off.
+
+    Parameters
+    ----------
+    z_ou
+        Length-N TRAIN-frozen Z-OU array. NaN where unwarmed /
+        non-tradeable; state carries through NaN runs.
+    session_id
+        Length-N dense-rank session index (0..S-1).
+    tradeable
+        Length-N bool — used to locate the session-close bar in Regime A.
+    regime
+        ``'A'`` (intraday-only, force-close per session) or ``'B'``
+        (multi-day carry).
+    a_entry_z
+        Bertram optimal entry threshold in Z-OU units, > 0.
+    stop_mode
+        ``'none'`` (default) or ``'hard'``. Hard mode triggers a z-stop
+        at ``|z_ou| >= stop_k_sigma``.
+    stop_k_sigma
+        K. Only consulted when ``stop_mode == 'hard'``.
+    max_holding
+        Maximum bars in trade before forced exit with
+        ``exit_reason='time_stop'``.
+    """
+    if regime not in ("A", "B"):
+        raise ValueError(f"regime must be 'A' or 'B', got {regime!r}")
+    if stop_mode not in ("none", "hard"):
+        raise ValueError(f"stop_mode must be 'none' or 'hard', got {stop_mode!r}")
+    if not np.isfinite(a_entry_z) or a_entry_z <= 0:
+        raise ValueError(f"a_entry_z must be positive finite, got {a_entry_z}")
+    z = np.asarray(z_ou, dtype=float)
+    sids = np.asarray(session_id)
+    tr = np.asarray(tradeable, dtype=bool)
+    if z.shape != sids.shape or z.shape != tr.shape:
+        raise ValueError("shape mismatch among z_ou / session_id / tradeable")
+
+    pos = np.zeros(z.size, dtype=np.int8)
+    held = np.zeros(z.size, dtype=np.int32)
+    er: list = [None] * z.size
+
+    if regime == "A":
+        for a, b in session_segments(sids):
+            sig = _generate_signals_ou_one_session(
+                z[a:b],
+                tr[a:b],
+                a_entry_z=a_entry_z,
+                stop_mode=stop_mode,
+                stop_k_sigma=stop_k_sigma,
+                max_holding=max_holding,
+                force_close_at_last_tradeable=True,
+            )
+            pos[a:b] = sig.position
+            held[a:b] = sig.days_in_trade
+            er[a:b] = list(sig.exit_reason)
+    else:  # Regime B
+        sig = _generate_signals_ou_one_session(
+            z,
+            tr,
+            a_entry_z=a_entry_z,
+            stop_mode=stop_mode,
+            stop_k_sigma=stop_k_sigma,
+            max_holding=max_holding,
+            force_close_at_last_tradeable=False,
+        )
+        pos[:] = sig.position
+        held[:] = sig.days_in_trade
+        er[:] = list(sig.exit_reason)
+
+    return IntradaySignalSeries(position=pos, days_in_trade=held, exit_reason=er, regime=regime)
+
+
+__all__ = ["IntradaySignalSeries", "generate_signals_two_regime", "generate_signals_ou"]

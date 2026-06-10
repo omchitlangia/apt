@@ -26,7 +26,12 @@ from apt.intraday.calendar import (
     session_segments,
 )
 from apt.intraday.loader import AlignedMinutePair, load_minute_pair
-from apt.intraday.signals import IntradaySignalSeries, generate_signals_two_regime
+from apt.intraday.resample import ResampledPair, resample_within_session
+from apt.intraday.signals import (
+    IntradaySignalSeries,
+    generate_signals_ou,
+    generate_signals_two_regime,
+)
 from apt.intraday.zscore import (
     fit_tod_vol_profile,
     intraday_rolling_zscore,
@@ -43,8 +48,11 @@ __all__ = [
     "session_segments",
     "AlignedMinutePair",
     "load_minute_pair",
+    "ResampledPair",
+    "resample_within_session",
     "IntradaySignalSeries",
     "generate_signals_two_regime",
+    "generate_signals_ou",
     "fit_tod_vol_profile",
     "intraday_rolling_zscore",
     "sessionized_rolling_zscore",
