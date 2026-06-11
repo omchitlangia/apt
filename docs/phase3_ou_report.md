@@ -325,6 +325,57 @@ attribution direction we *can* compute from existing artifacts.
 | OU @ 5-min, Regime B, 3 bps (**best cell**)      |    2         |       2            |     34   |   +21.24 |      0.962 |
 | OU @ 15-min, Regime B, 3 bps                     |    2         |       2            |     31   |   +17.81 |      0.823 |
 
+### Cost-ladder slopes vs LEVELS — what is engine-attributable, what is not
+
+**The §11.2 d-figures `d_cost_ladder_f{1,5,15}_{A,B}.png` compare OU
+vs rolling_z on DIFFERENT universes**: OU on 2 HL-band-survivor
+pair-folds, rolling_z on all 19. Those ladders are useful for
+visualising the cost-degradation pattern *per engine*, but the
+**level** difference between the two lines mixes (engine + threshold
+optimality + cost-aware band placement) with (universe selection by
+HL band). They must NOT be read as a direct engine head-to-head on
+LEVELS.
+
+**The matched-universe ladder** (§11.7,
+`reports/phase3_ou/figures/matched_universe/d_matched_universe_cost_ladder_f{5,15}_B.png`)
+restricts both engines to the IDENTICAL 2 pair-folds (the OU HL-band
+survivors). On that ladder:
+
+| freq | cost | OU net Sharpe | rolling_z net Sharpe | OU n_trades | rolling_z n_trades |
+|-----:|-----:|--------------:|---------------------:|------------:|-------------------:|
+|  5   |  1   |        1.006  |               1.047  |        37   |              225   |
+|  5   |  3   |        0.962  |               0.781  |        34   |              225   |
+|  5   |  5   |        0.889  |               0.513  |        32   |              225   |
+|  5   |  8   |        0.910  |               0.110  |        30   |              225   |
+| 15   |  1   |        0.816  |               0.661  |        32   |               88   |
+| 15   |  3   |        0.823  |               0.539  |        31   |               88   |
+| 15   |  5   |        0.805  |               0.416  |        30   |               88   |
+| 15   |  8   |        0.772  |               0.227  |        27   |               88   |
+
+The interpretation that survives this matched-universe view:
+
+* **Ladder SLOPES are engine-attributable.** OU's net Sharpe degrades
+  by ~0.1 unit per 7 bps of cost increase (1.006 → 0.910 over the
+  full 1→8-bps sweep at freq 5). Rolling_z's net Sharpe degrades by
+  ~0.94 units over the same sweep (1.047 → 0.110). The slope ratio
+  is ~10×, and it traces directly to **OU's cost-aware threshold
+  re-fit** widening the entry band as `c` rises (a* moves 0.405→0.536
+  at fold 6, 0.458→0.609 at fold 4; n_trades drops 37→30) while
+  rolling_z's fixed ±2 / ±0.5 threshold is cost-blind (n_trades
+  identically 225 across costs). This is a real engine effect.
+
+* **Ladder LEVELS between OU and the original 14-pair rolling_z
+  baseline (§11.2 d-figures) are universe-confounded** and must
+  NOT be quoted as engine-vs-engine differences. The headline net
+  Sharpe gap of 0.96 vs 0.09 at freq 5 cost 3 (in §5.2 above) is
+  ~0.18 attributable to engine (per the matched-universe row) and
+  ~0.69 attributable to the HL-band selection picking a more
+  tradeable subset.
+
+* **At cost = 1 bps, rolling_z beats OU on the matched universe**
+  (1.047 vs 1.006). The "OU engine adds Sharpe" claim is conditional
+  on cost ≥ 3 bps; the cost-1 result actively refutes it.
+
 Coarse-bar rolling_z does ~50× fewer trades than v2 1-min B (1930 vs
 3446 — and the v2 number is on a 1.36× wider pair-fold base; per-
 pair-fold trades drop ~5-7×). The OU cells trade an additional
@@ -965,17 +1016,17 @@ Figure-letter taxonomy: see
 | letter | figure                                                                 |
 |:------:|------------------------------------------------------------------------|
 |   a    | [per-pair-fold equity (gross+net)](../reports/phase3_ou/figures/ou_best_cell/a_ou_best_per_pair_fold_equity.png) |
-|   b    | [portfolio NAV gross vs net](../reports/phase3_ou/figures/ou_best_cell/b_ou_best_portfolio_nav.png)               |
+|   b    | [portfolio NAV gross vs net](../reports/phase3_ou/figures/ou_best_cell/b_ou_best_portfolio_nav.png) — terminal net 47.0% sits ~23 pp BELOW the 2019-Q2 peak (~70%). The annualised 21.24% in the headline tables uses the **terminal** value, not the peak, so the headline is endpoint-conservative and consistent with the visible 2019-Q3/Q4 drawdown on the chart. |
 |   h    | [exit-reason composition by pair-fold](../reports/phase3_ou/figures/ou_best_cell/h_ou_best_exit_reasons.png)      |
 
 ### 11.2 Grid roll-ups — `figures/grid_rollups/`
 
 | letter | figure                                                                                         |
 |:------:|------------------------------------------------------------------------------------------------|
-| d × 6  | cost ladder (engines overlaid) for every (freq ∈ {1,5,15}, regime ∈ {A,B}) — see `d_cost_ladder_f{freq}_{regime}.png` |
+| d × 6  | cost ladder (engines overlaid) for every (freq ∈ {1,5,15}, regime ∈ {A,B}) — see `d_cost_ladder_f{freq}_{regime}.png`. **WARNING: these compare engines on DIFFERENT universes (OU on 2 HL-band-survivor pair-folds, rolling_z on all 19). Slopes are engine-attributable; LEVELS are universe-confounded — see §5.2 and §11.7.** |
 |   i    | [trade counts by engine × freq @ B, 3 bps](../reports/phase3_ou/figures/grid_rollups/i_trade_counts_B_3bps.png)        |
 |   f    | [half-life distribution per freq with A/B bands](../reports/phase3_ou/figures/grid_rollups/f_half_life_distribution.png) |
-|   g    | [frozen-μ drift per pair-fold with ±0.5σ_eq flags](../reports/phase3_ou/figures/grid_rollups/g_drift_chart.png)      |
+|   g    | [frozen-μ drift per pair-fold with ±0.5σ_eq flags](../reports/phase3_ou/figures/grid_rollups/g_drift_chart.png) — actual drift range from `g_drift_chart.csv` is **[−7.05, +4.85] σ_eq** across 54 (freq × fold × pair) bars; most-negative INDUSINDBK/HDFCBANK fold 6 at −7.05 (all three freqs); most-positive ULTRACEMCO/GRASIM fold 6 at +4.85. 42 of 54 bars lie outside ±0.5 σ_eq; 27 of 54 outside ±2.0 σ_eq; median \|drift\| = 2.13 σ_eq. **Prior chat description claimed "−4 to −6 σ_eq" — incorrect; true low is −7.05, true high is +4.85, both confirmed against `g_drift_chart.csv`.** |
 |   j    | [(1+β)/2 histogram, all pairs vs traded survivors](../reports/phase3_ou/figures/grid_rollups/j_beta_histogram_all_vs_traded.png) |
 |   k    | [exclusion funnel (per-freq, Regime B)](../reports/phase3_ou/figures/grid_rollups/k_exclusion_funnel.png)           |
 
@@ -1013,5 +1064,39 @@ Figures (a/c/e/f/g/i/j/k) are **N/A** at v2 1-min:
 
 Full list of (group, key, png, csv) tuples:
 [`reports/phase3_ou/figures/MANIFEST.csv`](../reports/phase3_ou/figures/MANIFEST.csv).
-Total: **41 figures**, each with a companion CSV. Generator:
-`scripts/16_retro_figures_phase3.py`.
+Total: **43 figures**, each with a companion CSV.
+
+### Regeneration
+
+`reports/phase3_ou/figures/` is **gitignored** — the PNGs and their
+companion CSVs do not live in git. To re-create the entire figure tree
+from the persisted artifacts under `reports/phase3/` and
+`reports/phase3_ou/`:
+
+```bash
+.venv/bin/python scripts/16_retro_figures_phase3.py
+```
+
+The script reads only existing CSVs — **no number is recomputed** — and
+deterministically rewrites every PNG and companion CSV plus
+`MANIFEST.csv`. Re-running on identical inputs is byte-identical for
+the CSVs (PNG byte-identity depends on matplotlib backend version).
+
+### 11.7 Matched-universe cost ladder — `figures/matched_universe/`
+
+Cost ladder restricted to the **2 OU HL-band survivor pair-folds**
+(`(fold=4, INDUSINDBK/HDFCBANK)` + `(fold=6, KOTAKBANK/HDFCBANK)`)
+with both engines run on that IDENTICAL universe. Removes the
+universe-selection confound from the §11.2 d-figures.
+
+| letter | figure                                                                                          |
+|:------:|-------------------------------------------------------------------------------------------------|
+|   d    | [matched-universe ladder freq=5, B](../reports/phase3_ou/figures/matched_universe/d_matched_universe_cost_ladder_f5_B.png) |
+|   d    | [matched-universe ladder freq=15, B](../reports/phase3_ou/figures/matched_universe/d_matched_universe_cost_ladder_f15_B.png) |
+
+Companion CSV: [`matched_metrics.csv`](../reports/phase3_ou/figures/matched_universe/matched_metrics.csv) — 16 rows (2 engines × 2 freqs × 4 costs).
+
+Interpretation: see §5.2 "Cost-ladder slopes vs LEVELS". OU's flatter
+slope is engine-attributable (Bertram threshold widens with cost,
+suppressing trades). The §11.2 LEVEL gap between OU and the 14-pair
+rolling_z baseline is universe-confounded.

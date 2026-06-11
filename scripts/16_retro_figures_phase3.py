@@ -245,6 +245,127 @@ def emit_grid_rollups() -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Group B-extra: MATCHED-UNIVERSE cost ladder — engines on the SAME pair-folds
+# ---------------------------------------------------------------------------
+
+
+def _matched_metrics_long() -> pd.DataFrame:
+    """Aggregate pair_sessions for both engines restricted to HEADLINE_SURVIVORS
+    (the 2 OU HL-band survivor pair-folds), compute portfolio metrics per
+    (engine, freq, cost, regime=B, stop=none).
+
+    Returns a DataFrame with the column schema fig_d_cost_ladder expects:
+        engine, freq_min, regime, spread_bps, stop_mode,
+        gross_sharpe, net_sharpe, gross_total_pct, net_total_pct, n_trades.
+    """
+    import math
+
+    ps_ou = pd.read_csv(P3OU / "pair_sessions_ou.csv")
+    ps_rz = pd.read_csv(P3OU / "pair_sessions_rolling_baseline.csv")
+    if "stop_mode" not in ps_rz.columns:
+        ps_rz = ps_rz.assign(stop_mode="none")
+    if "engine" not in ps_rz.columns:
+        ps_rz = ps_rz.assign(engine="rolling_z")
+    tr_ou = pd.read_csv(P3OU / "trades_ou.csv")
+    tr_rz = pd.read_csv(P3OU / "trades_rolling_baseline.csv")
+    if "stop_mode" not in tr_rz.columns:
+        tr_rz = tr_rz.assign(stop_mode="none")
+
+    def _portfolio_metrics(sub: pd.DataFrame) -> dict:
+        port = (
+            sub.groupby("date", as_index=False)
+            .agg(g=("gross_log_ret", "mean"), n=("net_log_ret", "mean"))
+            .sort_values("date")
+        )
+        g = port.g.to_numpy()
+        n = port.n.to_numpy()
+        sd_g = float(g.std(ddof=1)) if len(g) > 1 else 0.0
+        sd_n = float(n.std(ddof=1)) if len(n) > 1 else 0.0
+        return {
+            "gross_total_pct": float(math.expm1(g.sum()) * 100),
+            "net_total_pct": float(math.expm1(n.sum()) * 100),
+            "gross_sharpe": float(g.mean() / sd_g * math.sqrt(252)) if sd_g > 0 else float("nan"),
+            "net_sharpe": float(n.mean() / sd_n * math.sqrt(252)) if sd_n > 0 else float("nan"),
+        }
+
+    rows: list[dict] = []
+    survivors = set(HEADLINE_SURVIVORS)
+    for ps, tr, engine in [(ps_ou, tr_ou, "ou"), (ps_rz, tr_rz, "rolling_z")]:
+        for freq in (5, 15):
+            for cost in (1, 3, 5, 8):
+                sub_ps = ps[
+                    (ps.engine == engine)
+                    & (ps.freq_min == freq)
+                    & (ps.regime == "B")
+                    & (ps.spread_bps == cost)
+                    & (ps.stop_mode == "none")
+                ]
+                sub_ps = sub_ps[
+                    [
+                        (int(f), p) in survivors
+                        for f, p in zip(sub_ps.fold_id, sub_ps.pair, strict=False)
+                    ]
+                ]
+                if sub_ps.empty:
+                    continue
+                m = _portfolio_metrics(sub_ps)
+                sub_tr = tr[
+                    (tr.engine == engine)
+                    & (tr.freq_min == freq)
+                    & (tr.regime == "B")
+                    & (tr.spread_bps == cost)
+                    & (tr.stop_mode == "none")
+                ]
+                sub_tr = sub_tr[
+                    [
+                        (int(f), p) in survivors
+                        for f, p in zip(sub_tr.fold_id, sub_tr.pair, strict=False)
+                    ]
+                ]
+                rows.append(
+                    {
+                        "engine": engine,
+                        "freq_min": freq,
+                        "regime": "B",
+                        "spread_bps": cost,
+                        "stop_mode": "none",
+                        "n_trades": int(len(sub_tr)),
+                        **m,
+                    }
+                )
+    return pd.DataFrame(rows)
+
+
+def emit_matched_universe_ladder() -> dict:
+    """Cost ladder restricted to the 2 OU HL-band survivor pair-folds.
+
+    Equal universe per engine. Engine effect = ladder slope (cost-aware vs
+    cost-blind thresholds); universe effect on levels is removed.
+    """
+    out = OUT_ROOT / "matched_universe"
+    metrics_matched = _matched_metrics_long()
+    # Persist the matched metrics CSV so the report can cite the exact numbers
+    (out).mkdir(parents=True, exist_ok=True)
+    matched_path = out / "matched_metrics.csv"
+    metrics_matched.to_csv(matched_path, index=False)
+    logger.info("Wrote matched-universe metrics: {}", matched_path)
+
+    paths: dict = {}
+    for freq in (5, 15):
+        paths[f"d_{freq}"] = rf.fig_d_cost_ladder(
+            metrics_matched,
+            out_dir=out,
+            name=f"d_matched_universe_cost_ladder_f{freq}_B",
+            freq_min=freq,
+            regime="B",
+        )
+    logger.info(
+        "Matched-universe ladder figures: {}", {k: str(v[0].name) for k, v in paths.items()}
+    )
+    return paths
+
+
+# ---------------------------------------------------------------------------
 # Group C: Coarse rolling_z cells (the addendum-#5 baselines) — (a, b, h) each
 # ---------------------------------------------------------------------------
 
@@ -416,6 +537,7 @@ def main() -> int:
     summary = {}
     summary["ou_best_cell"] = emit_ou_best_cell()
     summary["grid_rollups"] = emit_grid_rollups()
+    summary["matched_universe"] = emit_matched_universe_ladder()
     summary["rolling_z_coarse"] = emit_coarse_rolling_z()
     summary["attribution_slice"] = emit_attribution_slice()
     summary["v2_1min_rolling_z"] = emit_phase3_v2_applicable()

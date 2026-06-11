@@ -142,11 +142,27 @@ folded into an `__OTHER__` row in the companion CSV.
 
 ## 8. MLflow attachment
 
-If MLflow is wired up (it is **not** at the time of writing —
-2026-06-11), every figure must be logged as an artefact to the
-unit's MLflow run alongside the metric scalars. When MLflow is not
-wired, the figures appendix in the report serves as the artefact
-catalogue.
+MLflow is **not wired** in this repo as of 2026-06-11. Status:
+
+- **Interim artefact catalogue.** The figures appendix in each unit
+  report (and the auto-generated
+  `reports/<unit>/figures/MANIFEST.csv`) serves as the artefact
+  catalogue until MLflow is adopted. The manifest enumerates every
+  `(group, key, png, csv)` tuple emitted by the figures driver, so
+  re-running the driver against persisted artifacts deterministically
+  recreates every figure.
+- **MLflow adoption is deferred to the Kalman-unit discovery as an
+  open question.** That unit will decide whether MLflow (or an
+  alternative tracker — DVC, plain S3 + manifest, etc.) is the right
+  layer to add, and whether `src/apt/reporting/figures.py` should be
+  taught to call `mlflow.log_artifact(png_path)` when a tracker is
+  active. The Kalman discovery's question list should explicitly
+  surface "tracker selection" as an item.
+- **No back-filling planned.** Even if MLflow is adopted later, the
+  pre-MLflow units are NOT to be retroactively attached to a fabricated
+  run — there is no canonical "original run" to recover IDs from, and a
+  freshly-created retro run would be misleading provenance. The
+  manifest stays the record of truth for pre-MLflow units.
 
 When this changes, update this section first, then teach
 `src/apt/reporting/figures.py` to optionally call
