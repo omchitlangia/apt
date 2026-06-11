@@ -138,6 +138,25 @@ re-stamp helper that emits trades must use these labels and only these:
 `fig_h_exit_reason_stacked` enforces this list; unknown values are
 folded into an `__OTHER__` row in the companion CSV.
 
+### 7.1 Trade-CSV schema (v2-cost-beta-2026.06.11)
+
+Every newly-written trade CSV must carry these columns in addition to
+the per-trade fields:
+
+| column                  | meaning                                                                 |
+|-------------------------|-------------------------------------------------------------------------|
+| `pair_beta`             | β actually used to bill this round-trip                                  |
+| `cost_log_per_pair_rt`  | billed round-trip cost in log units (= `(1+β) × cost_log_per_leg`)       |
+| `schema_version`        | string constant `TRADE_CSV_SCHEMA_VERSION` (currently `"v2-cost-beta-2026.06.11"`) |
+| `n_legs`                | **DEPRECATED** — kept at value `2` for one cycle; downstream readers must use `cost_log_per_pair_rt` instead. Will be removed in the next schema bump |
+
+Historical pre-v2 CSVs do NOT carry `pair_beta` / `cost_log_per_pair_rt` /
+`schema_version`. Re-stamps that join β from a separate fold-pair table
+(e.g. `reports/phase3/fold_pairs.csv`, `reports/fold_pairs_daily_beta.csv`)
+recover the missing β post-hoc; this is what
+`metrics_*_DELTA_corrected_vs_old.csv` files in `reports/phase3_ou/`
+were built from.
+
 ------------------------------------------------------------------------
 
 ## 8. MLflow attachment

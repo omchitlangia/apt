@@ -232,6 +232,8 @@ def main() -> None:
     if not port.is_empty():
         port.write_csv(port_csv)
 
+    from apt.intraday.costs import TRADE_CSV_SCHEMA_VERSION
+
     trades_rows = [
         {
             "fold_id": t.fold_id,
@@ -248,6 +250,10 @@ def main() -> None:
             "gross_pct": float(np.expm1(t.gross_log_pnl) * 100),
             "net_pct": float(np.expm1(t.net_log_pnl) * 100),
             "exit_reason": t.exit_reason,
+            "pair_beta": t.pair_beta,
+            "cost_log_per_pair_rt": t.cost_log,
+            "n_legs": 2,  # DEPRECATED — see schema_version; carried one cycle
+            "schema_version": TRADE_CSV_SCHEMA_VERSION,
         }
         for t in result.trades
     ]
