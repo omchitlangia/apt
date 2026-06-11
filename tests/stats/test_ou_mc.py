@@ -141,7 +141,7 @@ def test_bertram_mc_first_passage_validator(kappa: float, sigma: float, cost: fl
         f"  analytic = {analytic_obj:.6e}\n"
         f"  MC mean  = {mc_mean:.6e}\n"
         f"  MC SE    = {mc_se:.6e}\n"
-        f"  |diff|   = {diff:.6e}  (tol = max(3*SE={3*mc_se:.6e}, 5%={rel_floor:.6e}))\n"
+        f"  |diff|   = {diff:.6e}  (tol = max(3*SE={3 * mc_se:.6e}, 5%={rel_floor:.6e}))\n"
         f"  a*       = {a_star:.6e}  (a_z* = {th.a_entry_z:.4f})\n"
         f"  T bars   = {T}, K paths = {K}"
     )
@@ -151,5 +151,5 @@ def test_bertram_mc_first_passage_validator(kappa: float, sigma: float, cost: fl
     assert 0.5 < mc_mean / analytic_obj < 2.0, (
         f"MC/analytic ratio out of [0.5, 2.0] band at "
         f"(kappa={kappa}, sigma={sigma}, cost={cost}): "
-        f"ratio={mc_mean/analytic_obj:.4f}"
+        f"ratio={mc_mean / analytic_obj:.4f}"
     )
