@@ -1,38 +1,52 @@
-"""Zero-price-move round-trip must realise net P&L exactly -cost.
+"""Zero-price-move round-trip must realise net P&L exactly −(1+β)·per_leg_cost.
 
-This pins the v2 cost-deduction plumbing. If the OU engine's accounting
-ever drifts from v2's (e.g. a 2x scaling, an off-by-one bar, or a
-direction-sign flip), this test catches it.
+Under the **(1+β) billing** convention in :mod:`apt.intraday.costs`, the
+single central function ``CostBreakdown.billed_cost_log_per_pair_round_trip``
+computes pair-fold round-trip cost as ``(1 + β) × cost_log_per_leg``.
+``β = 1`` reproduces the legacy 2× equal-notional value exactly (the
+continuity pin replacing the old ``-c`` test).
 
-The notional convention (equal-notional, n_legs=2) is documented in
-docs/ou_thresholds_design.md §8.1; this test does NOT pin the
-convention itself — just the plumbing.
+The tests below cover:
+
+* The β-grid asked for by Unit C: ``{0.057, 0.872, 1.0, 1.643}``.
+* Long + short sides on a flat spread.
+* Two sequential round-trips composing to −2·(1+β)·per_leg.
+* Mismatched ``pair_beta`` arguments to ``run_pair_fold`` are passed
+  through to the emitted ``IntradayTrade`` rows verbatim (so re-stamps
+  can join β safely).
 """
 
 from __future__ import annotations
+
+import math
 
 import numpy as np
 import pandas as pd
 import pytest
 
 from apt.intraday.backtest import run_pair_fold
+from apt.intraday.costs import CostBreakdown
 from apt.intraday.signals import IntradaySignalSeries
 
+# Per-leg log cost used for every test below (3 bps total spread ⇒ 7.5 bps per leg).
+PER_LEG_LOG_COST = CostBreakdown(total_spread_bps=3).cost_log_per_leg
 
+
+@pytest.mark.parametrize("beta", [0.057, 0.872, 1.0, 1.643])
 @pytest.mark.parametrize("regime", ["A", "B"])
-def test_zero_move_round_trip_realises_negative_cost(regime: str) -> None:
-    """Force a synthetic round-trip on a flat spread and check the deduction."""
+def test_zero_move_round_trip_realises_negative_one_plus_beta_cost(
+    beta: float, regime: str
+) -> None:
+    """A flat-spread short round-trip on a pair-fold with β realises net = −(1+β)·per_leg."""
     n = 8
     timestamps = pd.date_range("2020-06-15 09:15", periods=n, freq="1min", tz="Asia/Kolkata")
     sids = np.zeros(n, dtype=np.int32)
-    # FLAT spread: entry at bar 1, exit at bar 3, no price movement.
     spread = np.full(n, 0.5, dtype=float)
-    z = spread.copy()  # placeholder; not used for accounting
+    z = spread.copy()
 
     pos = np.zeros(n, dtype=np.int8)
     held = np.zeros(n, dtype=np.int32)
-    er = [None] * n
-    # Short entry at bar 1; close at bar 3 with mean_revert
+    er: list = [None] * n
     pos[1] = -1
     pos[2] = -1
     held[1] = 1
@@ -41,7 +55,11 @@ def test_zero_move_round_trip_realises_negative_cost(regime: str) -> None:
     er[3] = "mean_revert"
 
     sig = IntradaySignalSeries(position=pos, days_in_trade=held, exit_reason=er, regime=regime)
-    cost = 0.0015  # 3 bps total spread, 15 bps round-trip in log units
+    cb = CostBreakdown(total_spread_bps=3)
+    cost = cb.billed_cost_log_per_pair_round_trip(beta=beta)
+    expected = (1.0 + beta) * PER_LEG_LOG_COST
+    assert cost == pytest.approx(expected, abs=1e-15)
+
     res = run_pair_fold(
         fold_id=0,
         pair_key="TEST/PAIR",
@@ -52,20 +70,32 @@ def test_zero_move_round_trip_realises_negative_cost(regime: str) -> None:
         signals=sig,
         cost_log_per_round_trip=cost,
         finalize_fold_boundary=(regime == "B"),
+        pair_beta=beta,
     )
     assert len(res.trades) == 1
     tr = res.trades[0]
     assert tr.gross_log_pnl == pytest.approx(0.0, abs=1e-15)
     assert tr.cost_log == pytest.approx(cost, abs=1e-15)
     assert tr.net_log_pnl == pytest.approx(-cost, abs=1e-15)
-    # Net per-bar at exit deducted EXACTLY cost (gross at exit = 0 since no move)
+    assert tr.pair_beta == pytest.approx(beta, abs=1e-15)
+
+    # Net per-bar at exit deducted EXACTLY cost (gross at exit = 0)
     exit_idx = 3
     assert res.gross_log_ret[exit_idx] == pytest.approx(0.0, abs=1e-15)
     assert res.net_log_ret[exit_idx] == pytest.approx(-cost, abs=1e-15)
 
 
-def test_zero_move_long_round_trip() -> None:
-    """Mirror test: long-spread round-trip on flat spread."""
+def test_continuity_pin_beta_one_reproduces_legacy_2x() -> None:
+    """β=1 must reproduce the legacy 2 × per_leg value bit-exactly."""
+    cb = CostBreakdown(total_spread_bps=3)
+    billed = cb.billed_cost_log_per_pair_round_trip(beta=1.0)
+    legacy_2x = 2.0 * cb.cost_log_per_leg
+    assert billed == pytest.approx(legacy_2x, abs=0)  # exact equality
+    assert billed == 2.0 * cb.cost_log_per_leg  # bit-exact
+
+
+def test_zero_move_long_round_trip_at_beta() -> None:
+    """Mirror test: long-spread round-trip on flat spread with β = 1.643."""
     n = 8
     timestamps = pd.date_range("2020-06-15 09:15", periods=n, freq="1min", tz="Asia/Kolkata")
     sids = np.zeros(n, dtype=np.int32)
@@ -74,7 +104,7 @@ def test_zero_move_long_round_trip() -> None:
 
     pos = np.zeros(n, dtype=np.int8)
     held = np.zeros(n, dtype=np.int32)
-    er = [None] * n
+    er: list = [None] * n
     pos[2] = +1
     pos[3] = +1
     pos[4] = +1
@@ -85,7 +115,9 @@ def test_zero_move_long_round_trip() -> None:
     er[5] = "mean_revert"
 
     sig = IntradaySignalSeries(position=pos, days_in_trade=held, exit_reason=er, regime="B")
-    cost = 0.0025  # 8 bps spread
+    cb = CostBreakdown(total_spread_bps=8)  # 8 bps spread; 12.5 bps per leg
+    beta = 1.643
+    cost = cb.billed_cost_log_per_pair_round_trip(beta=beta)
     res = run_pair_fold(
         fold_id=0,
         pair_key="TEST/PAIR",
@@ -96,15 +128,17 @@ def test_zero_move_long_round_trip() -> None:
         signals=sig,
         cost_log_per_round_trip=cost,
         finalize_fold_boundary=False,
+        pair_beta=beta,
     )
     assert len(res.trades) == 1
     tr = res.trades[0]
     assert tr.gross_log_pnl == pytest.approx(0.0, abs=1e-15)
     assert tr.net_log_pnl == pytest.approx(-cost, abs=1e-15)
+    assert tr.pair_beta == pytest.approx(beta, abs=1e-15)
 
 
-def test_zero_move_costs_compose_additively() -> None:
-    """Two sequential zero-move trades realize -2c (one cost per round-trip)."""
+def test_zero_move_costs_compose_additively_at_beta() -> None:
+    """Two sequential zero-move trades realize -2·(1+β)·per_leg."""
     n = 12
     timestamps = pd.date_range("2020-06-15 09:15", periods=n, freq="1min", tz="Asia/Kolkata")
     sids = np.zeros(n, dtype=np.int32)
@@ -113,14 +147,13 @@ def test_zero_move_costs_compose_additively() -> None:
 
     pos = np.zeros(n, dtype=np.int8)
     held = np.zeros(n, dtype=np.int32)
-    er = [None] * n
-    # Trade 1: short entry at bar 1, exit at bar 3
+    er: list = [None] * n
+    # Two short round-trips
     pos[1] = pos[2] = -1
     held[1] = 1
     held[2] = 2
     pos[3] = 0
     er[3] = "mean_revert"
-    # Trade 2: short entry at bar 5, exit at bar 7
     pos[5] = pos[6] = -1
     held[5] = 1
     held[6] = 2
@@ -128,7 +161,9 @@ def test_zero_move_costs_compose_additively() -> None:
     er[7] = "mean_revert"
 
     sig = IntradaySignalSeries(position=pos, days_in_trade=held, exit_reason=er, regime="B")
-    cost = 0.0015
+    cb = CostBreakdown(total_spread_bps=3)
+    beta = 0.872
+    cost = cb.billed_cost_log_per_pair_round_trip(beta=beta)
     res = run_pair_fold(
         fold_id=0,
         pair_key="TEST/PAIR",
@@ -139,9 +174,20 @@ def test_zero_move_costs_compose_additively() -> None:
         signals=sig,
         cost_log_per_round_trip=cost,
         finalize_fold_boundary=False,
+        pair_beta=beta,
     )
     assert len(res.trades) == 2
     for tr in res.trades:
         assert tr.net_log_pnl == pytest.approx(-cost, abs=1e-15)
-    # Sum of per-bar net = -2c
+        assert tr.pair_beta == pytest.approx(beta, abs=1e-15)
     assert float(res.net_log_ret.sum()) == pytest.approx(-2.0 * cost, abs=1e-15)
+
+
+def test_billing_rejects_invalid_beta() -> None:
+    cb = CostBreakdown(total_spread_bps=3)
+    with pytest.raises(ValueError):
+        cb.billed_cost_log_per_pair_round_trip(beta=-0.1)
+    with pytest.raises(ValueError):
+        cb.billed_cost_log_per_pair_round_trip(beta=float("nan"))
+    with pytest.raises(ValueError):
+        cb.billed_cost_log_per_pair_round_trip(beta=math.inf)

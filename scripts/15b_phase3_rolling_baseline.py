@@ -40,7 +40,7 @@ from apt.intraday import (
     resample_within_session,
 )
 from apt.intraday.backtest import run_pair_fold
-from apt.intraday.costs import CostBreakdown
+from apt.intraday.costs import TRADE_CSV_SCHEMA_VERSION, CostBreakdown
 from apt.intraday.signals import generate_signals_two_regime
 from apt.utils.logging import setup_logging
 from apt.utils.paths import ensure_dirs, processed
@@ -177,6 +177,7 @@ def _compute_rolling_pair_fold(
             signals=sig,
             cost_log_per_round_trip=base_cost_log,
             finalize_fold_boundary=(regime == "B"),
+            pair_beta=float(pair.beta),
         )
         out[regime] = res
     return out
@@ -213,13 +214,15 @@ def main() -> None:
     logger.info("After liquidity gate: {} pair-folds", len(pair_fold_keep))
 
     base_cost = CostBreakdown(total_spread_bps=3)
-    base_cost_log = base_cost.cost_log_per_pair_round_trip
 
     # Cache: (fold_id, pair_key, freq_min) -> {A: result, B: result, window_bars, max_holding_bars}
     cache: dict[tuple[int, str, int], dict] = {}
     t0 = time.time()
     for (fold_id, pair_key), pair in pair_fold_keep.items():
         fold = folds_by_id[fold_id]
+        # β-aware base cost: cached net is downstream-restamped per-pair anyway,
+        # but using the right β keeps the cache's net_log_ret coherent for diagnostics.
+        base_cost_log = base_cost.billed_cost_log_per_pair_round_trip(beta=float(pair.beta))
         for freq_min in FREQS:
             try:
                 res = _compute_rolling_pair_fold(
@@ -256,7 +259,6 @@ def main() -> None:
                 if (fid, pk, freq_min) in cache
             ]
             for cb in (CostBreakdown(total_spread_bps=c) for c in COSTS_BPS):
-                new_cost_log = cb.cost_log_per_pair_round_trip
                 pair_session_records: list[dict] = []
                 cell_trades: list = []
                 bars_held_total = 0
@@ -266,9 +268,11 @@ def main() -> None:
                     key = (fold_id, pair_key, freq_min)
                     if key not in cache:
                         continue
+                    # β-aware new cost for THIS (cell, pair-fold).
+                    new_cost_log = cb.billed_cost_log_per_pair_round_trip(beta=float(_pair.beta))
                     pf_res = cache[key][regime]
                     net_arr, new_trades = _net_pnl_for_cost(
-                        pf_res, new_cost_log=new_cost_log, base_cost_log=base_cost_log
+                        pf_res, new_cost_log=new_cost_log, base_cost_log=new_cost_log
                     )
 
                     df = pd.DataFrame(
@@ -326,6 +330,10 @@ def main() -> None:
                                 "cost_log": tr.cost_log,
                                 "net_log_pnl": tr.net_log_pnl,
                                 "exit_reason": tr.exit_reason,
+                                "pair_beta": tr.pair_beta,
+                                "cost_log_per_pair_rt": tr.cost_log,
+                                "n_legs": 2,  # DEPRECATED — see schema_version; carried one cycle
+                                "schema_version": TRADE_CSV_SCHEMA_VERSION,
                             }
                         )
 

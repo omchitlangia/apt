@@ -207,6 +207,36 @@ def test_a_star_infeasible_at_huge_cost() -> None:
     assert not th.fit_ok
 
 
+def test_a_star_monotone_in_cost_under_beta_aware_billing() -> None:
+    """Under the (1+β) cost convention, a* is monotone in the BILLED cost.
+
+    Cost cells with the same spread but different β yield different billed
+    costs; for a fixed pair-fold the resulting a* must respect the same
+    monotonicity property as a*(c).
+    """
+    from apt.intraday.costs import CostBreakdown
+
+    fit = _fit_from_params(kappa=0.05, sigma_eq=0.01)
+    a_stars: list[float] = []
+    last_c = -1.0
+    # Sweep (spread_bps, beta) combinations so that the BILLED cost is monotone.
+    for spread_bps in (1, 3, 5, 8):
+        for beta in (0.0, 0.5, 1.0, 1.643):
+            cb = CostBreakdown(total_spread_bps=spread_bps)
+            c = cb.billed_cost_log_per_pair_round_trip(beta=beta)
+            # Skip combinations where billed cost is not strictly monotone vs last;
+            # we want a sweep of distinct increasing c values.
+            if c <= last_c:
+                continue
+            last_c = c
+            th = bertram_threshold(fit, cost_log_per_round_trip=c)
+            a_stars.append(th.a_entry_z if th.fit_ok else float("inf"))
+    for i in range(1, len(a_stars)):
+        assert (
+            a_stars[i] >= a_stars[i - 1] - 1e-6
+        ), f"a* not monotone in β-aware billed cost at i={i}: {a_stars}"
+
+
 def test_kappa_monotonicity_at_fixed_sigma_eq() -> None:
     """At fixed sigma_eq and cost, faster reversion (higher kappa) -> higher objective.
 

@@ -41,7 +41,13 @@ from apt.intraday.signals import IntradaySignalSeries
 
 @dataclass(frozen=True)
 class IntradayTrade:
-    """One round-trip on one pair within one regime + fold."""
+    """One round-trip on one pair within one regime + fold.
+
+    ``cost_log`` is the **billed** round-trip cost (``(1 + pair_beta) ×
+    cost_log_per_leg`` under the v2-cost-beta schema). ``pair_beta``
+    records the β actually used to bill, which lets a future re-stamp
+    pass derive net P&L without re-running.
+    """
 
     fold_id: int
     pair_key: str
@@ -57,6 +63,7 @@ class IntradayTrade:
     cost_log: float
     net_log_pnl: float
     exit_reason: str  # mean_revert | stop | time | session_close | fold_boundary
+    pair_beta: float = float("nan")
 
 
 @dataclass(frozen=True)
@@ -84,6 +91,7 @@ def run_pair_fold(
     signals: IntradaySignalSeries,
     cost_log_per_round_trip: float,
     finalize_fold_boundary: bool = True,
+    pair_beta: float = float("nan"),
 ) -> IntradayPairFoldResult:
     """Run minute-level PnL accounting for one pair-fold under one regime/cost.
 
@@ -186,6 +194,7 @@ def run_pair_fold(
                     cost_log=float(cost),
                     net_log_pnl=float(net_pnl),
                     exit_reason=str(reason),
+                    pair_beta=float(pair_beta),
                 )
             )
             in_trade_entry = None
@@ -224,6 +233,7 @@ def run_pair_fold(
                 cost_log=float(cost),
                 net_log_pnl=float(net_pnl),
                 exit_reason="fold_boundary",
+                pair_beta=float(pair_beta),
             )
         )
 
