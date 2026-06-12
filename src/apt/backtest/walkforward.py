@@ -28,9 +28,12 @@ Leakage-free guarantees (CI-tested):
     already known at the test bar, so this is NOT leakage.
   * Signal state at test start is FLAT — warmup bars don't produce trades.
 
-Cost model: ``cost_bps_per_leg`` is the round-trip cost of ONE leg
-(brokerage + STT + slippage). Two legs per pair trade, so the total log-cost
-deducted per round trip is ``2 × cost_bps_per_leg / 10000``. Cost is
+Cost model: ``cost_bps_per_leg`` is the per-LEG per-round-trip cost
+(brokerage + STT + slippage). Under the **(1+β) billing convention**
+(see ``apt.intraday.costs``), the total log-cost deducted per pair
+round-trip is ``(1 + pair.beta) × cost_bps_per_leg / 10000``, where
+β is the pair's frozen hedge ratio from the train-window EG fit. β=1
+reproduces the legacy 2× equal-notional value exactly. Cost is
 deducted on the EXIT day of each trade (entry day is cost-free).
 
 Open-trade handoff at a fold boundary: any open position at ``test_end`` is
@@ -91,7 +94,13 @@ class Fold:
 
 @dataclass(frozen=True)
 class Trade:
-    """One round-trip in one fold for one pair."""
+    """One round-trip in one fold for one pair.
+
+    ``cost_log`` is the **billed** round-trip cost
+    (``(1 + pair_beta) × cost_log_per_leg`` under the v2-cost-beta
+    schema). ``pair_beta`` records the β used to bill so a re-stamp can
+    re-derive net P&L without re-running.
+    """
 
     fold_id: int
     pair_key: str
@@ -105,6 +114,7 @@ class Trade:
     cost_log: float
     net_log_pnl: float
     exit_reason: str  # mean_revert | stop | time | fold_boundary
+    pair_beta: float = float("nan")
 
 
 # Callback signatures (documented here; not enforced as runtime types).
@@ -206,6 +216,7 @@ def _identify_trades_and_returns(
     exit_reason: list,
     days_in_trade: np.ndarray,
     cost_log_per_round_trip: float,
+    pair_beta: float = float("nan"),
 ) -> tuple[list[Trade], np.ndarray, np.ndarray]:
     """Walk through one pair's test slice; extract trades + daily returns.
 
@@ -260,6 +271,7 @@ def _identify_trades_and_returns(
                     cost_log=float(cost),
                     net_log_pnl=float(net),
                     exit_reason=str(exit_reason[i]),
+                    pair_beta=float(pair_beta),
                 )
             )
             in_trade_entry = None
@@ -289,6 +301,7 @@ def _identify_trades_and_returns(
                 cost_log=float(cost),
                 net_log_pnl=float(net),
                 exit_reason="fold_boundary",
+                pair_beta=float(pair_beta),
             )
         )
 
@@ -400,7 +413,10 @@ def run_walkforward(
 
     trading_days_list = list(trading_days)
     day_to_idx: dict[date, int] = {d: i for i, d in enumerate(trading_days_list)}
-    cost_log_per_round_trip = 2.0 * cost_bps_per_leg / 10_000.0
+    # Cost per pair round-trip is computed PER PAIR inside the fold loop
+    # under the (1+β) billing convention. The per-leg log cost is the
+    # β-independent component used by CostBreakdown.cost_log_per_leg.
+    cost_log_per_leg = cost_bps_per_leg / 10_000.0
 
     all_trades: list[Trade] = []
     portfolio_rows: list[dict] = []
@@ -487,6 +503,8 @@ def run_walkforward(
                 max_holding=max_holding,
             )
 
+            # β-aware billing: (1+β) × per-leg log cost.
+            cost_log_per_round_trip = (1.0 + float(pair.beta)) * cost_log_per_leg
             trades, gross_daily, net_daily = _identify_trades_and_returns(
                 fold_id=fold.fold_id,
                 pair_key=pair.key,
@@ -497,6 +515,7 @@ def run_walkforward(
                 exit_reason=sig.exit_reason,
                 days_in_trade=sig.days_in_trade,
                 cost_log_per_round_trip=cost_log_per_round_trip,
+                pair_beta=float(pair.beta),
             )
             all_trades.extend(trades)
             funnel["n_trades"] += len(trades)

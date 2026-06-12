@@ -49,7 +49,7 @@ from apt.intraday import (
     resample_within_session,
 )
 from apt.intraday.backtest import run_pair_fold
-from apt.intraday.costs import CostBreakdown
+from apt.intraday.costs import TRADE_CSV_SCHEMA_VERSION, CostBreakdown
 from apt.intraday.signals import generate_signals_ou
 from apt.stats.ou import bertram_threshold, fit_ou_params
 from apt.utils.logging import setup_logging
@@ -253,7 +253,6 @@ def _run_ou_cell(
 
     hl_min, hl_max = _hl_band_for_regime(cell.regime)
     cb = CostBreakdown(total_spread_bps=cell.cost_bps)
-    cost_log = cb.cost_log_per_pair_round_trip
 
     for (fold_id, pair_key), pair in pair_fold_keep.items():
         cache_key = (fold_id, pair_key, cell.freq_min)
@@ -269,7 +268,12 @@ def _run_ou_cell(
             exclusions["hl_band"] += 1
             continue
 
-        # Solve Bertram threshold at this cost
+        # β-aware cost: (1 + pair.beta) × per-leg log cost. The Bertram
+        # solver MUST receive this same β-aware c so the entry threshold
+        # is optimal under the actual billing.
+        cost_log = cb.billed_cost_log_per_pair_round_trip(beta=float(pair.beta))
+
+        # Solve Bertram threshold at this β-aware cost
         th = bertram_threshold(fit, cost_log_per_round_trip=cost_log)
         if not th.fit_ok:
             exclusions["infeasible_at_cost"] += 1
@@ -296,6 +300,7 @@ def _run_ou_cell(
             signals=sig,
             cost_log_per_round_trip=cost_log,
             finalize_fold_boundary=(cell.regime == "B"),
+            pair_beta=float(pair.beta),
         )
 
         # Per-session aggregation
@@ -356,6 +361,10 @@ def _run_ou_cell(
                     "net_log_pnl": tr.net_log_pnl,
                     "exit_reason": tr.exit_reason,
                     "a_entry_z": th.a_entry_z,
+                    "pair_beta": tr.pair_beta,
+                    "cost_log_per_pair_rt": tr.cost_log,
+                    "n_legs": 2,  # DEPRECATED — see schema_version; carried one cycle
+                    "schema_version": TRADE_CSV_SCHEMA_VERSION,
                 }
             )
 

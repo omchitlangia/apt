@@ -67,6 +67,7 @@ from apt.intraday.backtest import run_pair_fold
 from apt.intraday.costs import (
     FIXED_PER_LEG_RT,
     SPREAD_SWEEP_BPS,
+    TRADE_CSV_SCHEMA_VERSION,
     CostBreakdown,
     cost_breakdowns,
 )
@@ -356,6 +357,7 @@ def _compute_pair_fold(
             signals=sig,
             cost_log_per_round_trip=base_cost_log,
             finalize_fold_boundary=(regime == "B"),
+            pair_beta=float(pair.beta),
         )
         out[regime] = res
 
@@ -381,12 +383,17 @@ def _net_pnl_for_cost(
     pair_fold_res,
     *,
     new_cost_log: float,
-    base_cost_log: float,
+    base_cost_log: float,  # kept in the signature for API stability; unused
 ) -> tuple[np.ndarray, list]:
     """Adjust the cached gross/net + trade list for a different cost level.
 
-    Cheap: only re-stamps cost_log per trade and rewrites the per-bar net.
+    Re-derives net from gross (so the base cost in the cache is irrelevant
+    to this output). The caller is responsible for passing ``new_cost_log``
+    that ALREADY reflects β-aware billing for the pair-fold; this helper
+    is β-agnostic — it simply deducts ``new_cost_log`` on every trade exit
+    bar. The new Trade's ``pair_beta`` is copied from the cached trade.
     """
+    _ = base_cost_log  # signature kept; cache base is no longer used here
     gross = pair_fold_res.gross_log_ret
     # Start from gross and re-deduct the new cost at every trade exit bar.
     net = gross.copy()
@@ -414,6 +421,7 @@ def _net_pnl_for_cost(
                 cost_log=new_cost_log,
                 net_log_pnl=tr.gross_log_pnl - new_cost_log,
                 exit_reason=tr.exit_reason,
+                pair_beta=tr.pair_beta,
             )
         )
     return net, new_trades
@@ -528,10 +536,12 @@ def main() -> None:
 
     # -- stage 3: per pair-fold compute (gross-only; net derived per cost) --
     base_cost = CostBreakdown(total_spread_bps=SPREAD_SWEEP_BPS[0])
-    base_cost_log = base_cost.cost_log_per_pair_round_trip  # any value works for caching
     cache: dict[tuple[int, str], dict] = {}
     for (fold_id, pair_key), p in pair_fold_keep.items():
         fold = next(f for f in folds if f.fold_id == fold_id)
+        # β-aware base cost — only matters for the cached `net_log_ret` array,
+        # which downstream callers re-derive per cost via _net_pnl_for_cost.
+        base_cost_log = base_cost.billed_cost_log_per_pair_round_trip(beta=float(p.beta))
         logger.info(
             "  computing pair-fold: fold {} {} (half-life={:.1f}d)", fold_id, pair_key, p.half_life
         )
@@ -565,15 +575,17 @@ def main() -> None:
     metrics_rows: list[dict] = []  # one row per (regime, cost)
 
     for cb in cost_breakdowns():
-        cost_log = cb.cost_log_per_pair_round_trip
         for regime in ("A", "B"):
             # Stack per-pair daily returns onto a common date axis for the
             # portfolio = equal-weighted mean across active pairs that day.
             pair_daily: dict[str, pd.DataFrame] = {}
             for (fold_id, pair_key), res in cache.items():
+                pair_obj = pair_fold_keep[(fold_id, pair_key)]
+                # β-aware cost per pair-fold for the spread-sweep level
+                cost_log = cb.billed_cost_log_per_pair_round_trip(beta=float(pair_obj.beta))
                 pf_res = res[regime]
                 net_arr, new_trades = _net_pnl_for_cost(
-                    pf_res, new_cost_log=cost_log, base_cost_log=base_cost_log
+                    pf_res, new_cost_log=cost_log, base_cost_log=cost_log
                 )
                 # Per-session sum of minute returns
                 df = pd.DataFrame(
@@ -743,12 +755,15 @@ def _emit_sensitivity_diagnostics(cache, folds, pair_fold_keep) -> None:
     """
     if not cache:
         return
-    base_cost_log = CostBreakdown(total_spread_bps=3).cost_log_per_pair_round_trip
     # Pick the most-recent pair-fold available
     target_key = max(cache.keys(), key=lambda k: k[0])
     res = cache[target_key]
     fold_id, pair_key = target_key
     pair = pair_fold_keep[target_key]
+    # β-aware base cost for the sensitivity reruns
+    base_cost_log = CostBreakdown(total_spread_bps=3).billed_cost_log_per_pair_round_trip(
+        beta=float(pair.beta)
+    )
     _ = folds  # signature symmetry; folds carry no extra info beyond the cached res
     logger.info(
         "Sensitivity diag on {} (fold {}, half-life={:.1f}d, window={} bars)",
@@ -884,8 +899,8 @@ _EXIT_REASON_RENAME: dict[str, str] = {
 def _portfolio_from_cache(
     cache: dict,
     regime: str,
-    new_cost_log: float,
-    base_cost_log: float,
+    cb: CostBreakdown,
+    pair_fold_keep: dict,
     exclude_keys: frozenset[str] | set[str] = frozenset(),
 ) -> tuple[pd.DataFrame, list]:
     """Aggregate a (regime, cost) view into an equal-weighted portfolio.
@@ -894,15 +909,22 @@ def _portfolio_from_cache(
     per session (matches Phase 2A and the v1 phase-3 aggregation).
     Returns the per-session portfolio frame + the new (cost-restamped) trade list.
     Pairs whose key is in ``exclude_keys`` are dropped before aggregation.
+
+    Cost is **β-aware**: each pair-fold's billed RT cost is
+    ``cb.billed_cost_log_per_pair_round_trip(beta=pair.beta)``.
     """
     pair_daily: dict[str, pd.DataFrame] = {}
     all_new_trades: list = []
     for (fold_id, pair_key), res in cache.items():
         if pair_key in exclude_keys:
             continue
+        pair_obj = pair_fold_keep.get((fold_id, pair_key))
+        if pair_obj is None:
+            continue
+        cost_log = cb.billed_cost_log_per_pair_round_trip(beta=float(pair_obj.beta))
         pf_res = res[regime]
         net_arr, new_trades = _net_pnl_for_cost(
-            pf_res, new_cost_log=new_cost_log, base_cost_log=base_cost_log
+            pf_res, new_cost_log=cost_log, base_cost_log=cost_log
         )
         all_new_trades.extend(new_trades)
         df = pd.DataFrame(
@@ -948,12 +970,16 @@ def _per_pair_metrics_at_3bps(
     base_cost_log: float,
 ) -> pd.DataFrame:
     """Full per-pair metrics at 3 bps total spread, ranked by net_ann_pct."""
-    cost_log = CostBreakdown(total_spread_bps=3).cost_log_per_pair_round_trip
+    cb_3 = CostBreakdown(total_spread_bps=3)
     rows: list[dict] = []
     for (fold_id, pair_key), res in cache.items():
+        pair_obj = pair_fold_keep.get((fold_id, pair_key))
+        if pair_obj is None:
+            continue
+        cost_log = cb_3.billed_cost_log_per_pair_round_trip(beta=float(pair_obj.beta))
         pf_res = res[regime]
         net_arr, new_trades = _net_pnl_for_cost(
-            pf_res, new_cost_log=cost_log, base_cost_log=base_cost_log
+            pf_res, new_cost_log=cost_log, base_cost_log=cost_log
         )
         df = pd.DataFrame(
             {
@@ -983,7 +1009,6 @@ def _per_pair_metrics_at_3bps(
         for t in new_trades:
             exit_split[_EXIT_REASON_RENAME.get(t.exit_reason, t.exit_reason)] += 1
 
-        pair_obj = pair_fold_keep.get((fold_id, pair_key))
         rows.append(
             {
                 "fold_id": fold_id,
@@ -1021,19 +1046,20 @@ def _trade_level_rows_at_3bps(
     cache: dict,
     pair_fold_keep: dict,
     regime: str,
-    base_cost_log: float,
+    base_cost_log: float,  # API stability; per-pair billing computed below
 ) -> list[dict]:
     """One row per round-trip at 3 bps, with reconstructable-net columns."""
+    _ = base_cost_log
     cb_3 = CostBreakdown(total_spread_bps=3)
-    cost_log = cb_3.cost_log_per_pair_round_trip
-    n_legs = 2
     rows: list[dict] = []
     for (fold_id, pair_key), res in cache.items():
-        pf_res = res[regime]
-        _, new_trades = _net_pnl_for_cost(
-            pf_res, new_cost_log=cost_log, base_cost_log=base_cost_log
-        )
         pair_obj = pair_fold_keep.get((fold_id, pair_key))
+        if pair_obj is None:
+            continue
+        pair_beta = float(pair_obj.beta)
+        cost_log = cb_3.billed_cost_log_per_pair_round_trip(beta=pair_beta)
+        pf_res = res[regime]
+        _, new_trades = _net_pnl_for_cost(pf_res, new_cost_log=cost_log, base_cost_log=cost_log)
         sector = pair_obj.sector if pair_obj else ""
         is_structural = bool(pair_obj.is_structural) if pair_obj else False
         is_hdfcbank_anchored = "HDFCBANK" in pair_key.split("/")
@@ -1059,7 +1085,10 @@ def _trade_level_rows_at_3bps(
                     "gross_pct": float(np.expm1(t.gross_log_pnl) * 100),
                     "net_pct_at_3bps": float(np.expm1(t.net_log_pnl) * 100),
                     "cost_bps_excl_spread_per_leg_rt": FIXED_PER_LEG_RT,
-                    "n_legs": n_legs,
+                    "n_legs": 2,  # DEPRECATED — see schema_version; carried one cycle for back-compat
+                    "pair_beta": pair_beta,
+                    "cost_log_per_pair_rt": cost_log,
+                    "schema_version": TRADE_CSV_SCHEMA_VERSION,
                     "exit_reason": _EXIT_REASON_RENAME.get(t.exit_reason, t.exit_reason),
                 }
             )
@@ -1106,15 +1135,12 @@ def _emit_phase3_v2_outputs(
     # --- 3. metrics_two_regime_v2.csv: spread sweep with/without HDFC/HDFCBANK
     metrics_v2: list[dict] = []
     for cb in cost_breakdowns():
-        cost_log = cb.cost_log_per_pair_round_trip
         for regime in ("A", "B"):
             for variant_name, exclude in (
                 ("all", frozenset()),
                 ("ex_hdfc_hdfcbank", _STRUCTURAL_PAIR_KEYS),
             ):
-                port, trades_v = _portfolio_from_cache(
-                    cache, regime, cost_log, base_cost_log, exclude
-                )
+                port, trades_v = _portfolio_from_cache(cache, regime, cb, pair_fold_keep, exclude)
                 if port.empty:
                     continue
                 m_g = compute_metrics(port["gross_log_ret"].to_numpy())
@@ -1145,15 +1171,11 @@ def _emit_phase3_v2_outputs(
     )
 
     # --- 4. equity_curve_daily.csv (3 bps) + full-span plot ---------------
-    cost_log_3 = CostBreakdown(total_spread_bps=3).cost_log_per_pair_round_trip
-    portA_all, _ = _portfolio_from_cache(cache, "A", cost_log_3, base_cost_log)
-    portB_all, _ = _portfolio_from_cache(cache, "B", cost_log_3, base_cost_log)
-    portA_ex, _ = _portfolio_from_cache(
-        cache, "A", cost_log_3, base_cost_log, _STRUCTURAL_PAIR_KEYS
-    )
-    portB_ex, _ = _portfolio_from_cache(
-        cache, "B", cost_log_3, base_cost_log, _STRUCTURAL_PAIR_KEYS
-    )
+    cb_3 = CostBreakdown(total_spread_bps=3)
+    portA_all, _ = _portfolio_from_cache(cache, "A", cb_3, pair_fold_keep)
+    portB_all, _ = _portfolio_from_cache(cache, "B", cb_3, pair_fold_keep)
+    portA_ex, _ = _portfolio_from_cache(cache, "A", cb_3, pair_fold_keep, _STRUCTURAL_PAIR_KEYS)
+    portB_ex, _ = _portfolio_from_cache(cache, "B", cb_3, pair_fold_keep, _STRUCTURAL_PAIR_KEYS)
     eq_frames = {
         "A_net": portA_all,
         "B_net": portB_all,
