@@ -423,3 +423,125 @@ Files touched:
 
 Historical CSVs (the `_OLD_2x.csv` snapshots) are kept unmodified for
 provenance.
+
+------------------------------------------------------------------------
+
+## 13. Addendum (Part A close-out) — billing-vs-refit decomposition + §5.2 correction
+
+### 13.1 Billing vs refit decomposition (matched universe)
+
+Three scenarios per cell, computed by re-stamping the **persisted OLD
+trade set** (`trades_ou_OLD_2x.csv` / `trades_rolling_baseline_OLD_2x.csv`)
+to new billing without re-solving Bertram, then comparing to the
+already-run new fit:
+
+- **A = {old a*, old billing}** — the original 2× run.
+- **B = {old a*, new billing}** — OLD trade set, net re-stamped with
+  `(1+β)` cost (no re-solve). Billing-only effect.
+- **C = {new a*, new billing}** — the re-run (Bertram re-solved under
+  corrected pair-specific `c`).
+
+`billing = B − A`, `refit = C − B`. For rolling_z there is no a* and
+the thresholds are cost-blind, so the trade set is identical across
+billing ⇒ **refit ≡ 0** (confirmed numerically below).
+
+Net-Sharpe decomposition for every matched-universe cell with
+|Δ_Sharpe| > 0.05:
+
+| engine    | freq | cost | A old/old | B old/new | C new/new | billing | refit  |
+|-----------|-----:|-----:|----------:|----------:|----------:|--------:|-------:|
+| ou        | 15   |  1   |   0.8161  |   0.8051  |   1.0032  | −0.0110 | +0.1981 |
+| ou        | 15   |  5   |   0.8049  |   0.7850  |   0.6845  | −0.0199 | −0.1005 |
+| rolling_z |  5   |  1   |   1.0471  |   0.9454  |   0.9454  | −0.1017 |  0.0000 |
+| rolling_z |  5   |  3   |   0.7807  |   0.6434  |   0.6434  | −0.1373 |  0.0000 |
+| rolling_z |  5   |  5   |   0.5125  |   0.3414  |   0.3414  | −0.1711 |  0.0000 |
+| rolling_z |  5   |  8   |   0.1103  |  −0.1070  |  −0.1070  | −0.2173 |  0.0000 |
+| rolling_z | 15   |  3   |   0.5392  |   0.4733  |   0.4733  | −0.0659 |  0.0000 |
+| rolling_z | 15   |  5   |   0.4156  |   0.3309  |   0.3309  | −0.0848 |  0.0000 |
+| rolling_z | 15   |  8   |   0.2266  |   0.1127  |   0.1127  | −0.1140 |  0.0000 |
+
+**rolling_z is pure billing** (refit ≡ 0): the whole degradation comes
+from charging the β = 1.64 INDUSINDBK leg its true cost across 225
+round-trips. **The two OU cells are refit-dominated**: at 15-min 1 bps
+the corrected `c` widens the band enough to ADD trades that lift Sharpe
+(+0.198 refit), while at 15-min 5 bps the refit drops trades and costs
+−0.101.
+
+**Best-cell split (5-min B, 3 bps).** The headline cell's |Δ_Sharpe| is
+only 0.013, below the table threshold, but its decomposition was asked
+for explicitly. In **net annualised pp**:
+
+| scenario              | net_ann % | net_total % | net_sharpe |
+|-----------------------|----------:|------------:|-----------:|
+| A {old a*, old bill}  |   21.2413 |     46.9945 |     0.9623 |
+| B {old a*, new bill}  |   20.8436 |     46.0318 |     0.9465 |
+| C {new a*, new bill}  |   20.9150 |     46.2043 |     0.9494 |
+
+- billing (B−A) = **−0.398 pp** ann (−0.963 pp total)
+- refit (C−B)   = **+0.071 pp** ann (+0.173 pp total)
+- total         = **−0.326 pp** ann (−0.790 pp total)
+
+**Correction to the pre-stated estimate.** The Part A instruction
+anticipated "≈ −0.17 pp billing, −0.19 pp refit". The **actual**
+computed split is **−0.40 pp billing and +0.07 pp refit** (annualised);
+the refit is a small POSITIVE offset, not a −0.19 pp drag. Mechanism:
+the corrected `c` is LARGER for INDUSINDBK (β = 1.64), so Bertram widens
+its band and trims a few marginal round-trips, partially recovering the
+billing hit. The pre-stated estimate is superseded by these figures.
+
+### 13.2 §5.2 correction — the cost=1 inversion was an under-billing artifact
+
+Under the OLD 2× billing the matched-universe cost=1 cell showed
+rolling_z (net Sharpe 1.047) BEATING OU (1.006) — the "cost-1 inversion"
+flagged in the prior OU report §5.2. **Under corrected (1+β) billing the
+inversion disappears: OU ≥ rolling_z at ALL FOUR cost levels** on the
+matched universe.
+
+| freq=5, B | OU net Sharpe (new) | rolling_z net Sharpe (new) | OU ≥ RZ? |
+|----------:|--------------------:|---------------------------:|:--------:|
+| cost = 1  |        0.9808       |           0.9454           |   yes    |
+| cost = 3  |        0.9494       |           0.6434           |   yes    |
+| cost = 5  |        0.9049       |           0.3414           |   yes    |
+| cost = 8  |        0.9346       |          −0.1070           |   yes    |
+
+The inversion was an artifact of the OLD convention **under-billing the
+β = 1.64 INDUSINDBK/HDFCBANK leg by 32%**: rolling_z trades that leg 225
+times vs OU's ~17, so the under-billing flattered rolling_z far more.
+Correcting the bill removes the flatter.
+
+**Explicit scope caveats:** this is **n = 2 pair-folds** and the result
+is **β-composition dependent** — the matched universe contains exactly
+one high-β leg (1.64) and one near-unity leg (0.87). A different
+survivor set with β closer to 1 would show a much smaller correction.
+The "OU ≥ rolling_z at all costs" statement is a property of THIS
+2-pair-fold matched universe, not a general engine ranking. The
+engine-attribution caveat from the prior §5.2 (slopes attributable,
+LEVELS universe-confounded) is unchanged.
+
+### 13.3 κ(Δt) decline — observation-noise prior for the Kalman unit
+
+The per-bar OU reversion speed κ rises with bar size, but **κ per minute
+declines** as bars coarsen — the signature of microstructure
+(bid-ask-bounce) noise inflating apparent reversion at fine bars:
+
+| pair-fold | κ/min @ 1m | κ/min @ 5m | κ/min @ 15m | Δ(1→15) |
+|-----------|-----------:|-----------:|------------:|--------:|
+| fold 4 INDUSINDBK/HDFCBANK | 5.775e-04 | 4.208e-04 | 3.717e-04 | **−35.6%** |
+| fold 6 KOTAKBANK/HDFCBANK  | 6.996e-04 | 6.718e-04 | 6.541e-04 |  **−6.5%** |
+
+This corroborates the freq-1 caveat from the prior OU report (1-min HL
+estimates are biased low by bid-ask bounce). The **magnitude of the
+per-pair κ decline is a candidate seed for the per-pair observation-
+noise variance V_e** in the Kalman unit: INDUSINDBK's −35.6% implies a
+much larger microstructure footprint than KOTAK's −6.5%, so a
+pair-specific V_e prior is warranted rather than a shared scalar.
+Flagged for `feature/kalman-equilibrium`.
+
+### 13.4 Matched-universe ladder figures — re-rendered
+
+Confirmed: `scripts/16_retro_figures_phase3.py` was re-run after the
+β-aware OU + rolling_z re-runs.
+`reports/phase3_ou/figures/matched_universe/matched_metrics.csv` and the
+two ladder PNGs (`d_matched_universe_cost_ladder_f5_B.png`,
+`...f15_B.png`) now reflect corrected billing — the freq=5 ladder shows
+OU above rolling_z at every cost (no cost-1 crossover).
