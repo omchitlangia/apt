@@ -1,12 +1,43 @@
-# Unit K — Kalman / adaptive equilibrium — DESIGN ONLY
+# Unit K — Kalman / adaptive equilibrium
 
 **Branch:** `feature/kalman-equilibrium` (off post-merge `main` at 65b15f6)
-**Status:** Discovery + design note. **No implementation, no behaviour
-changes.** Ends with a numbered question list (§7).
+**Status:** Discovery + design note (§0-§8) → **IMPLEMENTATION** under
+the locked rulings in the Decision Log below.
 **Scope OUT (explicit):** pair selection, Johansen, regime/HMM,
 meta-labeling, cost accounting (now fixed — `(1+β)` billing on main),
-RL. This unit is ONLY about the adaptive equilibrium (μ, and possibly
-β) on an already-selected pair-fold.
+RL. This unit is ONLY about the adaptive equilibrium (μ; β stays frozen)
+on an already-selected pair-fold.
+
+------------------------------------------------------------------------
+
+## Decision Log (2026-06-12 — rulings Q1-Q8 are FINAL)
+
+The §7 questions are resolved as follows. These supersede the "default
+argued" recommendations in §7 wherever they differ.
+
+| Q | ruling |
+|---|--------|
+| **Q1 state vector** | **μ only.** β frozen as-is (the daily EG fit on `Pair`). No β tracking in this unit. TOD: **ignore** (option (C), mirror the OU path). |
+| **Q2 update frequency** | **Per-session causal local-level update of μ_t.** The filter updates μ at **session close** and the updated μ is **applied from the next session open** (no intra-session look-ahead). Re-anchor half-life expressed **in SESSIONS**, one **global** value across all pair-folds. |
+| **Q3 hyperparameters** | Re-anchor half-life selected on **TRAIN only** by grid `{∞, 20, 10, 5}` sessions. Selection criterion = **net return per unit time of the Bertram rule on train residuals**, SUBJECT to an **absorption guard**: residual half-life on train must lie in `[0.5×, 1.5×]` of the frozen-μ OU half-life; violating configs are **inadmissible**. One global value → test. Selecting on test is forbidden. (κ(Δt)-seeded `V_e` deferred — not used; the discount/half-life form carries adaptivity.) |
+| **Q4 signal composition** | **Band on the adaptive-center Z**, `Z_k = (X − μ_t)/σ_eq_resid`, where `(κ, σ_eq_resid)` are OU params fit on **TRAIN residuals** and `a*` is **re-solved per cost level** under main's β-aware `(1+β)` billing. Entry/exit/time-stop/EOD semantics identical to the OU unit. This is option (b) — preserves the per-cost-level refit principle. |
+| **Q5 attribution** | 16 new cells: `kalman_mu × OU-Bertram × freq{5,15} × cost{1,3,5,8} × Regime B`. Compared against frozen-OU and rolling_z matched-universe cells from main. The rolling_z-with-kalman-center arm is included ONLY if it is a trivial config toggle (see §6 ruling below). |
+| **Q6 HL-band gate** | **Static train OU fit** (option (i)). Selection set identical to the OU run ⇒ identical pair-folds. Selection remains train-only. |
+| **Q7 MLflow** | **Stay on `MANIFEST.csv`** for this unit; MLflow deferred. |
+| **Q8 contradictions** | None found (confirmed §7.8). |
+
+**Config surface (locked):** a new `signal.center ∈ {frozen, kalman_mu}`,
+**default `frozen`** (the OU unit's behaviour is the default; `kalman_mu`
+is opt-in). `signal.center == frozen` MUST reproduce the OU-unit cells
+exactly (frozen-control equivalence, tested).
+
+**rolling_z-with-kalman-center arm (Q6/§6 ruling):** rolling_z already
+centers on its OWN trailing rolling mean (`intraday_rolling_zscore`), so
+a second adaptive center is **incoherent** — there is no single "center"
+knob to toggle; the rolling mean IS the adaptive center. Therefore the
+8-cell rolling_z-with-kalman-center arm is **SKIPPED**. One paragraph in
+the report states this. The 16 new cells are the `kalman_mu × OU-Bertram`
+quadrant only.
 
 ------------------------------------------------------------------------
 

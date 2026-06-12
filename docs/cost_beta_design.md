@@ -194,17 +194,42 @@ KOTAKBANK/HDFCBANK fold 6 (β = 0.872, (1+β)/2 = 0.936) at the same cell:
 
 **Headline portfolio re-stamp** (best cell, n=2):
 - Current: net log P&L = 0.3877 ⇒ net total 47.34% ⇒ net ann ≈ **21.24%**
-- Corrected: 0.1244 + 0.2568 = **0.3812** ⇒ net total **46.42%** ⇒
-  net ann ≈ **21.07%**
+- Corrected: 0.1244 + 0.2568 = **0.3812** ⇒ net total 46.39% ⇒
+  net ann ≈ **20.85%**
 
-So at the headline cell the β-correction moves the net annual by
-**~0.2 pt** (from 21.24% to 21.07%) — much smaller than the §6.5
-linear-mean estimate of ~1.6 pt, because the two pair-folds have
-OFFSETTING signs (β = 1.64 over-pays, β = 0.87 under-pays).
+So at the headline cell the **billing-only** β-correction moves the net
+annual by **−0.40 pt** (21.24% → ~20.85% on the sum-of-logs basis here;
+20.84% on the engine's portfolio-mean basis — see [ERRATUM] below). The
+two pair-folds have OFFSETTING signs (β = 1.64 over-pays, β = 0.87
+under-pays) but do NOT net to neutral: INDUSINDBK's +32% under-billing
+on the larger-P&L pair-fold dominates.
 
-**The headline cell happens to be close to net-neutral under the
-correction; other cells (e.g. v2 Phase 3 1-min B on the full 19-
-pair-fold sample, daily Phase 2A) will move more.**
+> **[ERRATUM 2026-06-12 — corrects this subsection]**
+> This worked example originally reported the billing-only corrected
+> annual as **"21.07%" (Δ −0.17 pt)**. That figure was an **arithmetic
+> error in the annualization step**, NOT a per-leg/per-pair halving
+> error. Diagnosis:
+> - The per-trade billing deltas above are **correct and unchanged**:
+>   `Δ/trade = ((1+β) − 2) × cost_log_per_leg` = **+0.000483**
+>   (INDUSINDBK, β=1.64) and **−0.000096** (KOTAK, β=0.87). These match
+>   the re-stamp in `phase3_cost_beta_report.md` §13.1 bit-for-bit, so
+>   billing is applied per-pair `(1+β)×per_leg`, not double-halved.
+> - The error was downstream: the corrected sum-of-logs (0.3812) was
+>   transcribed to **21.07%** annual. Applying this subsection's OWN
+>   total→annual ratio (21.24/47.34 ≈ 0.449) to its OWN corrected total
+>   change (−0.95 pt) yields **≈ −0.43 pt → ~20.8%**, not 21.07%.
+> - The authoritative billing-only figure on the engine's
+>   **portfolio-mean** aggregation (mean across active pairs per session,
+>   the `metrics_ou.csv` basis) is **net ann 20.8436%** (Δ −0.3977 pt).
+>   See `phase3_cost_beta_report.md` §13.1 for the full
+>   billing-vs-refit decomposition and the unrounded legs.
+> - The §6.5 "−1.6 pt linear-mean" estimate used the subset-mean ratio
+>   (1+β)/2 ≈ 1.13 applied UNIFORMLY to both pairs, which over-charges
+>   KOTAK (true ratio 0.936); it is superseded by the per-pair re-stamp.
+
+**The headline cell moves materially under the correction; other cells
+(e.g. v2 Phase 3 1-min B on the full 19-pair-fold sample, daily Phase
+2A) move per `phase3_cost_beta_report.md` §4.**
 
 ------------------------------------------------------------------------
 

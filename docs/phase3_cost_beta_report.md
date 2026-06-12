@@ -89,9 +89,11 @@ pair-specific c = (1+β) × cost_log_per_leg.
 |  15  |   8  |          27  |          26  |          44.4938 |          43.7060 |        35.0624 |        33.5391 |         0.7716 |         0.7449 | -0.0267 |
 
 **Headline cell (freq=5, B, 3 bps) ΔSharpe = −0.013** — within ±0.1
-escalation gate. The corrected 21.07% annualised net (vs old 21.24%)
-matches the pre-registered expectation that the two pair-folds'
-opposite-sign β corrections largely cancel.
+escalation gate. The corrected **20.91%** annualised net (vs old 21.24%;
+`metrics_ou.csv` net_ann_pct = 20.914967) is a −0.33 pp move, decomposed
+into −0.40 pp billing and +0.07 pp refit in §13.1. (An earlier draft of
+this line and the design-doc §2.3 said "21.07%" — corrected; see §13.1
+root-cause note.)
 
 **Two cells exceed |0.1|** on Δ_netSh (both at freq=15):
 
@@ -363,7 +365,7 @@ Full manifest:
    §1 is migrated and tested. β = 1 reproduces the legacy 2× value
    bit-exactly as a continuity pin.
 2. **Phase 3 OU headline (5-min B, 3 bps) net Sharpe: 0.962 → 0.949
-   (Δ = −0.013).** Net annualised 21.24% → 21.07%. Within ±0.1; no
+   (Δ = −0.013).** Net annualised 21.24% → 20.91%. Within ±0.1; no
    conclusion overturned.
 3. **Phase 3 v2 @ 3 bps Δ within ±0.05 on both regimes.** No
    escalation.
@@ -477,17 +479,48 @@ for explicitly. In **net annualised pp**:
 | B {old a*, new bill}  |   20.8436 |     46.0318 |     0.9465 |
 | C {new a*, new bill}  |   20.9150 |     46.2043 |     0.9494 |
 
-- billing (B−A) = **−0.398 pp** ann (−0.963 pp total)
-- refit (C−B)   = **+0.071 pp** ann (+0.173 pp total)
-- total         = **−0.326 pp** ann (−0.790 pp total)
+**Decomposition identity (item 0b) — unrounded legs, must sum to the
+actual total.** `refit ≡ (actual C) − (billing re-stamp B)`, so
+`billing + refit = (B − A) + (C − B) = C − A = total` by construction.
+Unrounded (net_ann pp):
 
-**Correction to the pre-stated estimate.** The Part A instruction
-anticipated "≈ −0.17 pp billing, −0.19 pp refit". The **actual**
-computed split is **−0.40 pp billing and +0.07 pp refit** (annualised);
-the refit is a small POSITIVE offset, not a −0.19 pp drag. Mechanism:
-the corrected `c` is LARGER for INDUSINDBK (β = 1.64), so Bertram widens
-its band and trims a few marginal round-trips, partially recovering the
-billing hit. The pre-stated estimate is superseded by these figures.
+```
+A {old a*, old bill}   = 21.241294
+B {old a*, new bill}   = 20.843599      (billing re-stamp, portfolio-mean basis)
+C {new a*, new bill}   = 20.914967      (official metrics_ou.csv)
+
+billing = B − A        = −0.397695
+refit   = C − B        = +0.071368
+sum     = billing+refit= −0.326327   ==  C − A = −0.326327   ✓ (exact)
+```
+
+**Reconciliation note on the stated total.** The Part A instruction
+cited the total as "−0.355 pp". The **actual** total from the current
+artifacts is **−0.326327 pp** (= 20.914967 − 21.241294 from
+`metrics_ou.csv` / `metrics_ou_OLD_2x.csv`). The −0.355 figure does not
+match any current metric (net_total Δ = −0.790 pp, net_Sharpe Δ =
+−0.0129); it is superseded by the −0.326 pp computed here. The legs are
+defined so they sum to this actual total exactly.
+
+**Correction to the pre-stated billing/refit estimate.** The Part A
+instruction anticipated "≈ −0.17 pp billing, −0.19 pp refit". The
+**actual** split is **−0.398 pp billing and +0.071 pp refit**
+(annualised); the refit is a small POSITIVE offset, not a −0.19 pp drag.
+Mechanism: the corrected `c` is LARGER for INDUSINDBK (β = 1.64), so
+Bertram widens its band and trims a few marginal round-trips, partially
+recovering the billing hit. The pre-stated estimate is superseded.
+
+**Root cause of the −0.17 vs −0.40 billing discrepancy (item 0a).** The
+−0.17 pp originated in `cost_beta_design.md` §2.3 and was an
+**arithmetic error in the annualization step, NOT a per-leg/per-pair
+halving error**. The per-trade billing deltas are identical across both
+computations — `Δ/trade = ((1+β) − 2) × cost_log_per_leg` = +0.000483
+(INDUSINDBK) / −0.000096 (KOTAK) — confirming billing is applied per-pair
+`(1+β)×per_leg`, not double-halved. §2.3 transcribed its corrected
+sum-of-logs (0.3812) as "21.07%" when its own total→annual ratio
+(≈ 0.449) applied to its own corrected total change yields ~20.8%.
+`cost_beta_design.md` §2.3 now carries an [ERRATUM] cross-referencing
+this subsection.
 
 ### 13.2 §5.2 correction — the cost=1 inversion was an under-billing artifact
 
