@@ -38,30 +38,111 @@ fix-later punch list (§9), ranked by headline impact.
 ## 1. DSR / PBO gate — pinned at top (NSE + crypto)
 
 > **This block is the gate and is pinned here regardless of run order.**
-> Populated by §2 (NSE) and §6e (crypto). Until those run, the cells read
-> `[TODO compute]`.
+> NSE numbers from §2 (`reports/phase4/dsr_pbo/`). Crypto from §6e.
 
-| universe | candidate | Sharpe (per-period) | N trials | DSR | DSR p-value | PBO |
-|----------|-----------|--------------------:|---------:|----:|------------:|----:|
-| NSE matched | kalman best (5min/3bps) | [see §2] | [see §2a] | [§2b] | [§2b] | [§2c] |
-| NSE matched | frozen-OU best | [see §2] | — | [§2b] | [§2b] | [§2c] |
-| NSE matched | rolling_z best | [see §2] | — | [§2b] | [§2b] | [§2c] |
-| crypto | (scaffold) | [§6e] | [§6e] | [§6e] | [§6e] | [§6e] |
+**Headline (NSE matched universe, N = 46 honest trials, V = 0.00182):**
+
+| universe | selected candidate | ann net Sharpe | per-period SR | DSR | DSR p-value | clears N=46 bar? |
+|----------|--------------------|---------------:|--------------:|----:|------------:|:----------------:|
+| NSE matched | **kalman** best (f5/c1) | 2.145 | 0.135 | **0.808** | 0.192 | **yes** (only one) |
+| NSE matched | frozen-OU best (f15/c1) | 1.003 | 0.063 | 0.234 | 0.766 | no |
+| NSE matched | rolling_z best (f5/c1) | 0.945 | 0.063 | 0.230 | 0.770 | no |
+
+**PBO (CSCV, 24 NSE cells, S=16, 12 870 splits) = 0.104.**
+Source: [`2b_dsr.csv`](../reports/phase4/dsr_pbo/2b_dsr.csv),
+[`2c_pbo.csv`](../reports/phase4/dsr_pbo/2c_pbo.csv).
+
+Reading: under N=46 trials the *expected* best-by-luck per-period Sharpe is
+SR₀ = 0.096 (annualized ≈ 1.52). Only the **kalman** best (2.145 ann) clears
+it (DSR 0.808); frozen-OU (1.003) and rolling_z (0.945) sit **below** the
+luck bar (DSR ≈ 0.23). PBO = 0.104 says the in-sample-best cell lands below
+the OOS median only ~10% of the time — **low overfitting probability**. But
+the kalman p-value is 0.192 — it does **not** reach conventional
+significance, and DSR(kalman) decays to 0.647 at N=200
+([`2b_dsr_sensitivity_to_N.csv`](../reports/phase4/dsr_pbo/2b_dsr_sensitivity_to_N.csv)).
+
+| universe | (scaffold) | crypto DSR | crypto PBO |
+|----------|------------|-----------:|-----------:|
+| crypto | see §6e | [§6e] | [§6e] |
 
 **MANDATORY caveat (applies to every DSR/PBO number in this report):** with
-n = 2 NSE pair-folds the per-period return series are short and serially
-dependent; DSR/PBO distributional assumptions are strained. **Treat the NSE
-DSR/PBO as INDICATIVE, not definitive.** What would make them trustworthy:
-universe breadth (many independent pair-folds), which §5 (Johansen) and §6
-(crypto) begin to supply.
+n = 2 NSE pair-folds the per-period series are short and are the
+**concatenation of two disjoint folds** (≈2017 and ≈2019) — they violate the
+iid assumption behind DSR and mix two regimes inside every CSCV block.
+**Treat the NSE DSR/PBO as INDICATIVE, not definitive.** What would make them
+trustworthy: universe breadth (many independent pair-folds), which §5
+(Johansen) and §6 (crypto) begin to supply.
 
 ---
 
 ## 2. DSR / PBO — full results
 
-*(populated by `scripts/phase4/s2_dsr_pbo.py` → `reports/phase4/dsr_pbo/`)*
+Driver: `scripts/phase4/s2_dsr_pbo.py` → `reports/phase4/dsr_pbo/`. Modules
+`apt.stats.dsr` (Bailey & López de Prado 2014) and `apt.stats.pbo` (CSCV,
+Bailey et al. 2017), both unit-tested. Per-period return matrix: 504 daily
+sessions × 24 none-stop candidate cells (8 per engine), matched universe.
 
-[TODO compute] — see §2 driver.
+### 2a — honest trial count
+
+Source: [`2a_trial_ledger.csv`](../reports/phase4/dsr_pbo/2a_trial_ledger.csv).
+
+| source | count |
+|--------|------:|
+| OU grid (freq{1,5,15}×regime{A,B}×cost{1,3,5,8}×stop{none}=24 + cost3×hard=6) | 30 |
+| rolling_z coarse grid | 4 |
+| kalman cells (freq{5,15}×cost{1,3,5,8}) | 8 |
+| kalman re-anchor H-grid {∞,20,10,5} (train-only selection knob) | 4 |
+| **TOTAL explicit N** | **46** |
+
+Implicit selections (HL bands {A,B,C}; best-of-cell reporting) compound N
+further; the headline uses N = 46 and §2b's sensitivity sweep covers
+N ∈ {1, 30, 46, 100, 200}.
+
+### 2b — Deflated Sharpe Ratio
+
+Source: [`2b_dsr.csv`](../reports/phase4/dsr_pbo/2b_dsr.csv). V = 0.00182
+(per-period cross-trial Sharpe variance over 28 non-degenerate evaluated
+cells; 3 catastrophic hard-stop cells with annualized Sharpe < −2 dropped).
+
+| engine | cell | per-period SR | skew | kurtosis | SR₀ | PSR(0) | **DSR** | p-value |
+|--------|------|--------------:|-----:|---------:|----:|-------:|--------:|--------:|
+| kalman | f5/c1 | 0.135 | −0.035 | 6.60 | 0.096 | 0.999 | **0.808** | 0.192 |
+| frozen-OU | f15/c1 | 0.063 | −0.204 | 5.73 | 0.096 | 0.920 | 0.234 | 0.766 |
+| rolling_z | f5/c1 | 0.063 | +0.511 | 22.24 | 0.096 | 0.922 | 0.230 | 0.770 |
+
+Sensitivity ([`2b_dsr_sensitivity_to_N.csv`](../reports/phase4/dsr_pbo/2b_dsr_sensitivity_to_N.csv)):
+DSR(kalman) = 0.999 (N=1) → 0.848 (N=30) → 0.808 (N=46) → 0.725 (N=100) →
+0.647 (N=200). It stays above 0.5 across the whole range but never reaches
+p < 0.05.
+
+### 2c — PBO via CSCV
+
+Source: [`2c_pbo.csv`](../reports/phase4/dsr_pbo/2c_pbo.csv); figure
+[`pbo_logit_distribution.png`](../plots/phase4/dsr_pbo/pbo_logit_distribution.png).
+**PBO = 0.104** over 12 870 symmetric splits (S=16) of the 24-cell matrix.
+The logit distribution is centred well above 0 (median λ = 1.66): the
+in-sample-best cell is below the OOS median only ~10% of the time — low
+overfitting probability for the grid as a whole.
+
+### 2d — honesty caveat (MANDATORY)
+
+n = 2 pair-folds ⇒ the per-period series is the concatenation of two disjoint
+folds (≈2017 and ≈2019). This **strains every assumption**: DSR treats
+returns as iid (they are serially dependent and regime-mixed); CSCV blocks
+straddle the fold join. The DSR/PBO numbers are therefore **INDICATIVE, not
+definitive**. They would become trustworthy with **universe breadth** — many
+independent pair-folds so the return matrix has genuine cross-sectional width
+and the CSCV blocks are within-regime. §5 (Johansen) and §6 (crypto) are the
+breadth path; §6e re-runs this exact machinery on crypto.
+
+### 2 — verdict
+
+The gate **separates the engines cleanly**: only the adaptive (kalman) arm
+clears the N=46 multiple-testing bar (DSR 0.808), while frozen-OU and
+rolling_z fall below the luck threshold. PBO is low (0.104). **But** kalman's
+p-value is 0.192 — not significant — and the whole result rests on a
+2-fold concatenation. **Indicative support for the adaptive arm; not a
+deployable, significance-cleared edge.**
 
 ---
 
