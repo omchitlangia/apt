@@ -27,11 +27,14 @@ fix-later punch list (§9), ranked by headline impact.
 | A4 | fold-6 INDUSINDBK σ_eq_resid | [TODO data] | §1c(d) | not a traded survivor → no trade to recover σ_eq from | persist residual-fit σ_eq in `selection_table.csv` |
 | A5 | β-escalation hyperparameters | one global config, train-only | §3 | matches Unit-K discipline (no per-fold tuning) | documented in `docs/beta_escalation_design.md` |
 | A6 | coint-stability gate | window=60d, step=5, ADF p>0.10, 3 consec → blacklist | §4 | no prior calibration; chosen as a standard rolling-ADF setup | gates 19/19 at default (and 15/19 even at p>0.50/120d) → threshold needs a broad-universe base rate to calibrate; NSE binding [TODO]-pending-breadth |
-| A7 | crypto taker fee | labeled default bps (see §6) | §6 | venue-dependent; not in data | confirm against the actual venue fee schedule |
-| A8 | crypto funding-rate series | [TODO data] (see §6 inventory) | §6 | presence/absence determined by inventory | pull funding series if the venue publishes it |
-| A9 | crypto risk-management config | labeled default, NOT tuned | §6 | long-deferred crypto-stage plan, flagged not validated | a dedicated risk-tuning unit on crypto |
+| A7 | crypto taker fee | **5 bps/side** (10 bps/leg RT) | §6c | perp taker ≈ 0.05%; venue-dependent, not in data | confirm against the actual venue fee schedule; result is robust (gross already negative) |
+| A8 | crypto funding-rate series | **ABSENT → funding = 0** [TODO data] | §6c | no funding file in `/home/om/data_combined` | pull a funding series; would add carry cost to multi-day Regime-B holds |
+| A9 | crypto risk-management | `stop_z = 3.5` only, NOT tuned | §6d | long-deferred crypto risk framework; single hard z-stop placeholder | a dedicated risk-framework unit on crypto |
+| A_LIQ | crypto liquidity gate | median daily quote-vol ≥ **$10M** | §6b | standard "tradeable major" cut | keeps 22/30 symbols; at $50M only 7 survive (too thin for breadth) |
+| A10 | crypto engine = rolling-z only | OU/Bertram + Kalman = [TODO scope] | §6e | scaffold stage; reused the asset-agnostic engine first | port the adaptive engines → the fair crypto retest |
+| A11 | crypto Regime A (intraday) | [TODO] — daily bars only | §6c | no intraday resample built yet | resample 1m→{1h,4h}; enables Regime A + a bar-freq sweep |
 
-(Rows A5–A9 are populated as §§3–6 run; see each section.)
+(Rows A5–A11 are populated as §§3–6 run; see each section.)
 
 ---
 
@@ -61,9 +64,15 @@ the kalman p-value is 0.192 — it does **not** reach conventional
 significance, and DSR(kalman) decays to 0.647 at N=200
 ([`2b_dsr_sensitivity_to_N.csv`](../reports/phase4/dsr_pbo/2b_dsr_sensitivity_to_N.csv)).
 
-| universe | (scaffold) | crypto DSR | crypto PBO |
-|----------|------------|-----------:|-----------:|
-| crypto | see §6e | [§6e] | [§6e] |
+| universe | candidate | per-period SR | DSR | DSR p-value | PBO |
+|----------|-----------|--------------:|----:|------------:|----:|
+| **crypto** (rolling_z, Regime B, 81 pairs × 1440 d) | portfolio @ 3 bps | −0.008 | **0.367** | 0.633 | **0.439** |
+
+The crypto DSR/PBO **are** more trustworthy than the NSE ones — they run on 81
+pair-return columns over 1440 daily sessions (real cross-sectional width, no
+2-fold concatenation). What they show is a clean **negative**: the naive
+rolling-z crypto pairs strategy has **no edge** (negative Sharpe, DSR 0.37
+below the 0.5 line, PBO 0.44). See §6.
 
 **MANDATORY caveat (applies to every DSR/PBO number in this report):** with
 n = 2 NSE pair-folds the per-period series are short and are the
@@ -554,9 +563,95 @@ performance table. A genuine Johansen-vs-EG *performance* comparison would
 require re-running the entire downstream pipeline on the Johansen universe
 with matched corrections — out of scope this run (`[TODO scope]`).
 
-## Section 6 — Crypto port (scaffold + first results)
+## Section 6 — Crypto port (SCAFFOLD + FIRST RESULTS — not claimed validated)
 
-*(populated by §6 driver)* [TODO compute]
+Modules `apt.crypto` (Binance-kline loader + minimal cleaning, 2 unit tests)
+and `apt.crypto.costs` (taker+spread, (1+β) billing). Driver
+`scripts/phase4/s6_crypto.py` → `reports/phase4/crypto/`. Reuses the
+**asset-agnostic** walk-forward engine (`apt.backtest.run_walkforward`) via
+crypto callbacks — its leakage-free per-fold selection is preserved.
+
+### 6a — data inventory (verified readable)
+
+Source: [`inventory.csv`](../reports/phase4/crypto/inventory.csv),
+[`symbol_coverage.csv`](../reports/phase4/crypto/symbol_coverage.csv).
+
+| field | value |
+|-------|-------|
+| location | `/home/om/data_combined` (read access **OK**) |
+| symbols | **30** USDT pairs (BTC, ETH, BNB, SOL, XRP, … SHIB) |
+| bar frequency | **1-minute** Binance klines |
+| columns | 12-col headerless: open_time, OHLCV, close_time, quote_volume, n_trades, taker_buy_base/quote, ignore |
+| timestamp / tz | epoch in **UTC**; **mixed ms/µs** — Binance switched ms→µs in 2025 (the loader normalizes by magnitude) |
+| date range | 2017-08-17 → 2026-04-30 (per-symbol coverage varies) |
+| **funding-rate series** | **ABSENT** → cost model omits funding ([TODO data] A8) |
+
+### 6b — pipeline + cointegration
+
+Minimal crypto cleaning only (dedup open_time, drop non-positive OHLC, drop
+zero-volume bars); the **NSE seven-rule cascade does not transfer** (no
+corporate actions, 24/7) — the rest is `[TODO]` in `apt.crypto.loader`.
+Liquidity gate (labeled default A_LIQ: median daily quote-volume ≥ $10M)
+keeps **22/30** symbols. Common window 2018-05 → 2026-04 (2919 days).
+
+Cointegration (`cointegration.csv`): of **231** pairs, **16 EG+BH-FDR** and
+**85 Johansen-95%** are cointegrated. (The §5 confound recurs: Johansen
+without FDR is far more permissive.) **Breadth achieved** — unlike NSE's 2.
+
+### 6c — cost model
+
+Taker fee = **5 bps/side** labeled default (A7) → 10 bps/leg round-trip;
+plus the spread sweep {1,3,5,8} bps; (1+β) billing. **Funding deferred**
+(A8) — no series exists. Both Regime A and B were intended (6c); at daily
+frequency only **Regime B** (multi-day carry) is meaningful — **Regime A
+(intraday squareoff) needs intraday bars → [TODO]**.
+
+### 6d — risk management
+
+Labeled-default `stop_z = 3.5` (A9), **flagged not tuned** — the long-deferred
+crypto risk framework is represented by this single hard z-stop only; a full
+framework is `[TODO scope]`.
+
+### 6e — walk-forward + DSR/PBO (the first results)
+
+Source: [`metrics.csv`](../reports/phase4/crypto/metrics.csv),
+[`dsr_pbo.csv`](../reports/phase4/crypto/dsr_pbo.csv); figure
+[`crypto_cost_ladder.png`](../plots/phase4/crypto/crypto_cost_ladder.png).
+Engine = **rolling-z** (the OU/Bertram and μ-only/β+μ Kalman crypto engines
+are `[TODO scope]`). 12 folds, 112 pair-fold selections, **529 trades**.
+
+| cost | gross_total% | net_total% | gross_Sharpe | net_Sharpe | net_ann% | net_maxDD% |
+|-----:|-------------:|-----------:|-------------:|-----------:|---------:|-----------:|
+| 1 | −63.9 | −66.3 | −0.58 | −0.62 | −17.4 | −73.3 |
+| 3 | −63.9 | −66.8 | −0.58 | −0.63 | −17.5 | −73.5 |
+| 5 | −63.9 | −67.2 | −0.58 | −0.64 | −17.7 | −73.8 |
+| 8 | −63.9 | −67.8 | −0.58 | −0.65 | −18.0 | −74.1 |
+
+**Decisively negative — and gross is already negative**, so it is a **signal**
+problem, not a cost problem: naive rolling-z mean-reversion has no edge on
+trending crypto majors (−73% maxDD). DSR/PBO over **81 pair columns × 1440
+sessions**: DSR = **0.367** (p 0.633), PBO = **0.439**.
+
+**Does breadth make the DSR/PBO meaningful? YES** — this is the key §6e answer.
+Unlike the NSE n=2 (a 2-fold concatenation that strains every assumption), the
+crypto matrix has genuine cross-sectional width (81 independent pair series),
+so the CSCV blocks are well-populated and the DSR iid approximation is far less
+abused. And what the now-trustworthy numbers say is unambiguous: **no edge**
+(DSR below 0.5, PBO near 0.5, negative Sharpe).
+
+### 6f / 6 — verdict (SCAFFOLD)
+
+The crypto port is **scaffold + first results, explicitly not validated.** The
+honest first finding: **the naive rolling-z engine does not work on crypto**
+(negative gross). But this is **not** a fair test of the adaptive-equilibrium
+thesis — the OU/Bertram and Kalman engines (which on NSE doubled rolling-z) are
+`[TODO scope]` here, as are Regime A (intraday), the bar-frequency sweep,
+funding cost (A8), and the full risk framework (A9). What §6 **does** establish:
+(i) the data is real, inventoried, and loads; (ii) the pipeline ports
+end-to-end with breadth (231 pairs, 16 EG-FDR); (iii) **crypto breadth makes
+DSR/PBO trustworthy** in a way NSE n=2 never could — so it is the right venue
+to retest the adaptive engines and the §4 stability gate. That retest is the
+next unit.
 
 ---
 
