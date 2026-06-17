@@ -338,7 +338,106 @@ partly mis-stated, and it rests on n = 2 — exactly what §2 stress-tests.**
 
 ## Section 3 — β-escalation (β+μ joint Kalman)
 
-*(populated by §3 driver)* [TODO compute]
+Design + decision log (written **before** code):
+[`docs/beta_escalation_design.md`](beta_escalation_design.md). Engine
+`apt.stats.kalman_beta` (per-session causal joint (β, c) filter, 6 unit tests
+incl. exact frozen-control equivalence). Driver
+`scripts/phase4/s3_beta_escalation.py` → `reports/phase4/beta_escalation/`.
+Run on the 2 traded survivors + the fold-6 INDUSINDBK −1.79σ diagnostic
+(loaded from minute data; Pair/Fold from `fold_pairs.csv`, no re-selection).
+
+### 3a — state/observation + train-only selection
+
+State `θ_s = (β_s, c_s)`, `c_s = α + μ_s`; β observation is the **returns
+regression** `β̂_s = cov_s(Δx,Δy)/var_s(Δx)` (collapse-prone by design),
+level `ℓ̂_s = mean_s(y − β_s x)`; diagonal steady-state gains, `H_c = 20`
+inherited from Unit K, `H_β` selected on train from `{∞,40,20,10}` with the
+absorption guard **extended to β** (residual-HL guard + β-stability guard
+β_s ∈ [0.25,4]×β_0). Source:
+[`selection_beta_summary.csv`](../reports/phase4/beta_escalation/selection_beta_summary.csv).
+
+| H_β | n_admissible / 4 | mean train criterion |
+|----:|:----------------:|---------------------:|
+| ∞ | **4** | **0.000227** (CHOSEN) |
+| 40 | 0 | — (β-stability guard fails) |
+| 20 | 0 | — |
+| 10 | 0 | — |
+
+**The selection chooses H_β = ∞ — i.e. it refuses to track β.** Every finite
+H_β is inadmissible because β collapses out of the stability band on the
+train window (§3b). The mean train criterion at H_β=∞ (0.000227) is identical
+to the Unit-K μ-only value — as it must be (§3c equivalence).
+
+### 3b — β-collapse diagnostic (the finding)
+
+Source: [`beta_collapse.csv`](../reports/phase4/beta_escalation/beta_collapse.csv);
+figure [`beta_paths_f5.png`](../plots/phase4/beta_escalation/beta_paths_f5.png).
+At **every finite H_β**, on **every** pair-fold, β collapses toward 0 (5-min):
+
+| pair-fold | β₀ | β_min (H_β=40 / 20 / 10) | min ratio @ H_β=10 |
+|-----------|---:|--------------------------|-------------------:|
+| fold 4 INDUSINDBK | 1.643 | 0.197 / 0.139 / 0.089 | **0.054** |
+| fold 6 KOTAK | 0.872 | 0.134 / 0.039 / **−0.158** | −0.181 |
+| fold 6 INDUSINDBK | 1.138 | 0.209 / 0.189 / 0.146 | 0.128 |
+
+`beta_toward_zero = True` for all. This is **exactly the research report's
+weak-identification warning**: on 5-min bars the legs' intraday co-movement
+`cov(Δx,Δy)` is weak relative to the spread's own increments, so the
+returns-β estimate `β̂_s → ~0` (KOTAK even flips negative), and the filter
+drags β to the floor — the hedge evaporates. **We did not damp it; it is the
+result.**
+
+A nuance: the combined collapse flag (which also requires test-vs-train
+residual-variance *instability*) does **not** fire, because β collapses on
+**both** train and test symmetrically (var ratio ≈ 1). That is the stronger
+statement — the collapse is **structural** (intraday β is unidentifiable on
+these pairs), not a test-time regime break. (Punch list: refine the flag to
+key on `beta_toward_zero` vs an absolute-stability reference, not a
+train/test ratio.)
+
+### 3c — β+μ vs μ-only vs frozen; the fold-6 success metric
+
+Source: [`compare_3engine.csv`](../reports/phase4/beta_escalation/compare_3engine.csv),
+[`drift_3way.csv`](../reports/phase4/beta_escalation/drift_3way.csv).
+
+At the **selected** config (H_β=∞), β+μ **reproduces μ-only bit-for-bit**
+(max |Δ net_total%| = 0.0 vs `metrics_kalman.csv`) — the frozen-control
+equivalence holds at the P&L level, not just the residual. So on the matched
+universe β-escalation delivers **no gross or net change** (e.g. 5min/1bps:
+β+μ 139.94% net = μ-only 139.94%, both vs frozen-OU 48.27%).
+
+**Success metric — fold-6 INDUSINDBK drift inside ±1σ at an ADMISSIBLE
+config: NOT MET.**
+
+| H_β | drift frozen | drift μ-only | drift β+μ | β min ratio | inside ±1σ | admissible |
+|----:|-------------:|-------------:|----------:|------------:|:----------:|:----------:|
+| ∞ | −6.99 | −1.79 | −1.79 | 1.00 | no | **no** |
+| 40 | −6.99 | −1.79 | −0.73 | 0.18 | yes | no |
+| 20 | −6.99 | −1.79 | −0.65 | 0.17 | yes | no |
+| 10 | −6.99 | −1.79 | −0.55 | 0.13 | yes | no |
+
+The β+μ drift *does* fall inside ±1σ at finite H_β — **but only by collapsing
+β to ~0.13–0.18× its anchor**, which (i) fails the stability guard
+(inadmissible) and (ii) inflates σ_eq, so the "improvement" is largely a
+units artifact of an evaporated hedge, not a genuine reduction in mispricing.
+**No admissible β+μ config neutralizes fold-6 that μ-only could not.**
+
+### 3d — tests + verdict
+
+Tests (`tests/stats/test_kalman_beta.py`, 6): synthetic β recovery, strict
+causality / truncation invariance, **frozen-control equivalence**
+(H_β=∞ reproduces `run_local_level_mu` exactly), β-collapse on vanishing
+co-movement, β-stability guard, degenerate inputs — all pass.
+
+**Verdict (β-escalation): FAILED GATE — and the failure is the finding.**
+The NSE intraday hedge ratio cannot be tracked at 5/15-min frequency without
+collapsing (weak identification, confirmed on all 3 pair-folds). Train
+selection therefore freezes β (H_β=∞), at which point β+μ ≡ μ-only. The
+canonical −7σ fold-6 case is **not** admissibly neutralized by a tracking-β
+filter on this data. The escalation path forward is NOT "track β faster" — it
+is either (a) estimate β at a *lower* frequency (daily co-movement is
+stronger) or (b) a universe where the legs genuinely co-move intraday — which
+is one more reason to push to crypto (§6).
 
 ## Section 4 — rolling cointegration-stability gate (NSE)
 
