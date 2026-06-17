@@ -26,7 +26,7 @@ fix-later punch list (§9), ranked by headline impact.
 | A3 | KOTAK fold-6 μ_t path not persisted | [TODO data] | §1c(d) | Unit-K overlay export set only included INDUSINDBK | add KOTAK to overlay set in `scripts/17` and re-emit (no model change) |
 | A4 | fold-6 INDUSINDBK σ_eq_resid | [TODO data] | §1c(d) | not a traded survivor → no trade to recover σ_eq from | persist residual-fit σ_eq in `selection_table.csv` |
 | A5 | β-escalation hyperparameters | one global config, train-only | §3 | matches Unit-K discipline (no per-fold tuning) | documented in `docs/beta_escalation_design.md` |
-| A6 | coint-stability gate threshold | labeled default (see §4) | §4 | no prior calibration on this universe | sweep on the broader crypto universe where it can bind |
+| A6 | coint-stability gate | window=60d, step=5, ADF p>0.10, 3 consec → blacklist | §4 | no prior calibration; chosen as a standard rolling-ADF setup | gates 19/19 at default (and 15/19 even at p>0.50/120d) → threshold needs a broad-universe base rate to calibrate; NSE binding [TODO]-pending-breadth |
 | A7 | crypto taker fee | labeled default bps (see §6) | §6 | venue-dependent; not in data | confirm against the actual venue fee schedule |
 | A8 | crypto funding-rate series | [TODO data] (see §6 inventory) | §6 | presence/absence determined by inventory | pull funding series if the venue publishes it |
 | A9 | crypto risk-management config | labeled default, NOT tuned | §6 | long-deferred crypto-stage plan, flagged not validated | a dedicated risk-tuning unit on crypto |
@@ -441,7 +441,57 @@ is one more reason to push to crypto (§6).
 
 ## Section 4 — rolling cointegration-stability gate (NSE)
 
-*(populated by §4 driver)* [TODO compute]
+Engine `apt.stats.coint_stability` (rolling ADF on the spread level = the
+frozen-(α,β) EG residual; 4 unit tests: stationary→no-gate, random-walk→gate,
+regime-break→gate-partway, degenerate). Driver
+`scripts/phase4/s4_coint_stability.py` → `reports/phase4/coint_stability/`.
+Applied to **all 19 `fold_pairs` daily pair-folds** (broader than the 2
+intraday survivors) using the daily spread from `daily_clean.parquet`.
+
+### 4a — the gate
+
+Labeled defaults (→ ASSUMPTIONS A6): rolling **window = 60** trading days,
+**step = 5**, blacklist when ADF **p-value > 0.10** for **3 consecutive**
+windows. The spread of a frozen-(α,β) pair *is* the EG residual, so a rolling
+ADF on it tracks whether the cointegrating relation still holds.
+
+### 4b — how many gate out, and the impact
+
+Source: [`gate_summary.csv`](../reports/phase4/coint_stability/gate_summary.csv),
+[`threshold_sensitivity.csv`](../reports/phase4/coint_stability/threshold_sensitivity.csv),
+[`gate_impact.csv`](../reports/phase4/coint_stability/gate_impact.csv); figure
+[`adf_pvalue_paths.png`](../plots/phase4/coint_stability/adf_pvalue_paths.png).
+
+**At the default the gate fires on 19/19 pair-folds** — including both traded
+survivors — with mean rolling ADF p-values of 0.30–0.62 (max ≈ 1.0). This is
+**not** the anticipated near-null result, and the sensitivity sweep shows it
+is robust, not a threshold accident:
+
+| window | p>0.05 | p>0.10 | p>0.25 | p>0.50 |
+|-------:|-------:|-------:|-------:|-------:|
+| 60 | 19/19 | 19/19 | 19/19 | 19/19 |
+| 120 | 19/19 | 19/19 | 18/19 | **15/19** |
+
+Even at the very lenient p>0.50 / 120-day setting, 15/19 still gate. **The
+daily spreads of the EG-selected NSE pairs are not robustly stationary on
+rolling windows** — consistent with the broader Phase-3 finding that this
+universe is marginal. Two forces are entangled and **cannot be separated on
+n = 2**: (i) genuine marginal cointegration, and (ii) low ADF power on short
+(60–120 obs) windows.
+
+Gate impact on the kalman 5/3 survivors (`gate_impact.csv`): blacklisting
+after the gate date cuts net total **119.2% → 51.8%** but *improves* net
+Sharpe **1.96 → 2.93** and net maxDD **−21.1% → −6.8%** (170 of 504 sessions
+survive). This is **threshold-driven, not a validated edge** — it merely
+removes the back half of each fold.
+
+**Verdict: [TODO]-pending-breadth (A6).** The machinery is correct and tested,
+but the gate cannot be calibrated on 2 traded pair-folds without overfitting
+the threshold, and short-window ADF is too low-powered to discriminate true
+breakdowns from noise on this universe. The gate needs a **broad** universe
+(many pair-folds → a base rate to set a relative threshold, and longer series
+for ADF power) — i.e. crypto (§6) — before its binary blacklist can be
+trusted. The NSE binding result is therefore marked `[TODO]`.
 
 ## Section 5 — Johansen pair selection (NSE)
 
