@@ -657,31 +657,79 @@ next unit.
 
 ## §8. Figure inventory
 
-*(assembled at §7; per-subunit figure CSVs ship beside each PNG under
-`plots/phase4/<subunit>/`)*
+Every PNG ships a companion `.csv` of the same basename (the data behind it).
+PNGs are gitignored; regenerate by re-running the listed driver.
 
-- `plots/phase4/verification/h_exit_reason_stacked.png` — exit-reason mix,
-  kalman vs frozen (best cell).
-- `plots/phase4/verification/per_trade_pnl_dist.png` — per-trade net P&L
-  histograms.
-- `plots/phase4/verification/mu_tracking_indusindbk_fold4.png` — spread +
-  μ_frozen + μ_kalman with trade markers.
-- `plots/phase4/verification/d_cost_ladder_3engine.png` — net Sharpe vs cost,
-  3 engines × {f5, f15}.
+| figure | one-line | driver |
+|--------|----------|--------|
+| `plots/phase4/verification/h_exit_reason_stacked.png` | exit-reason mix, kalman vs frozen (best cell) | `s1_unit_k_verification.py` |
+| `plots/phase4/verification/per_trade_pnl_dist.png` | per-trade net P&L histograms | s1 |
+| `plots/phase4/verification/mu_tracking_indusindbk_fold4.png` | spread + μ_frozen + μ_kalman with trade marks | s1 |
+| `plots/phase4/verification/d_cost_ladder_3engine.png` | net Sharpe vs cost, 3 engines × {f5,f15} | s1 |
+| `plots/phase4/dsr_pbo/pbo_logit_distribution.png` | CSCV logit distribution (PBO=0.104) | `s2_dsr_pbo.py` |
+| `plots/phase4/beta_escalation/beta_paths_f5.png` | β_s collapse paths, all pair-folds (H_β=10) | `s3_beta_escalation.py` |
+| `plots/phase4/coint_stability/adf_pvalue_paths.png` | rolling ADF p-value paths + threshold | `s4_coint_stability.py` |
+| `plots/phase4/johansen/eg_vs_johansen.png` | EG p-value vs Johansen trace, by selection | `s5_johansen.py` |
+| `plots/phase4/crypto/crypto_cost_ladder.png` | crypto gross/net Sharpe vs cost (Regime B) | `s6_crypto.py` |
 
-## §9. Fix-later punch list
+## §9. FIX-LATER PUNCH LIST (ranked by how much each could move a headline)
 
-*(assembled at §7; ranked by headline impact — see ASSUMPTIONS register)*
+1. **(A1/A2) NSE rests on n = 2 pair-folds.** *Biggest mover.* The headline
+   kalman Sharpe ≈ 2.0 and DSR 0.808 are a 2-fold-concatenation statistic;
+   DSR p stays > 0.15 at every N. **Fix:** breadth — port the OU/Bertram +
+   Kalman engines to crypto (A10), where 81-pair DSR/PBO are already
+   trustworthy. Could move the headline from "indicative" to "validated/
+   rejected".
+2. **(A10) crypto adaptive engines missing.** §6 only ran rolling-z (which
+   failed). The thesis (adaptive μ ≫ rolling-z) is **untested on crypto**.
+   Fix could produce the first *validated* edge — or kill the thesis. High.
+3. **(A8) crypto funding cost absent.** Regime-B multi-day holds pay funding;
+   net P&L could shift materially once a funding series is added. Medium-high
+   (but §6 gross is already negative, so funding worsens, not rescues).
+4. **(A6) coint-stability gate threshold uncalibrated.** Gates 19/19 on NSE;
+   needs a broad-universe base rate. On crypto it could become a real filter.
+   Medium.
+5. **(A11) crypto Regime A + bar-frequency sweep.** Intraday crypto bars may
+   carry the mean-reversion that daily lacks; could flip the §6 sign. Medium.
+6. **(A9) crypto risk framework (only a z-stop now).** Could improve the −73%
+   DD materially. Medium (risk-adjusted, not gross).
+7. **(A3/A4) persist KOTAK μ-overlay + fold-6 σ_eq.** Completes 1c(d)
+   μ-tracking for the 2nd survivor. Low effort, no headline move.
+8. **β-collapse flag refinement (§3b).** Key on absolute β-stability, not a
+   train/test variance ratio (which misses symmetric collapse). Low.
+9. **(1g) exit-reason vocabulary.** Bump the Phase-3 engines to the fixed five
+   categories so re-stamps aren't needed. Low.
+10. **Johansen FDR control (§5).** Add a multiple-testing correction to the
+    Johansen path for a fair EG-vs-Johansen universe comparison. Low.
 
-1. **(A1/A2) n=2 → DSR/PBO indicative only.** Highest impact: the headline
-   Sharpe ≈ 2.0 is an n=2 statistic. Fix: breadth (§5, §6).
-2. **(A3) persist KOTAK μ-overlay** — completes 1c(d) μ-tracking. Low effort,
-   no model change.
-3. **(1g) exit-reason vocabulary** — bump engines to the fixed five
-   categories.
+## §10. PER-SECTION VERDICT (ordered by importance)
 
-## §10. Per-section verdict
+1. **§2 DSR/PBO (the gate) — the primary result.** On the matched NSE
+   universe, **only the adaptive (kalman) arm clears the N=46 multiple-testing
+   bar** (DSR 0.808) while frozen-OU and rolling_z fall below the luck
+   threshold; PBO is low (0.104). **But** kalman's p = 0.192 (not significant)
+   and everything rests on a 2-fold concatenation → **INDICATIVE, not
+   definitive.**
+2. **§6 Crypto (breadth) — the path forward.** Breadth makes DSR/PBO
+   trustworthy (81 pairs × 1440 d), and the *rolling-z* engine has **no edge**
+   on crypto (negative gross, DSR 0.37). The adaptive engines are untested
+   here — that retest is the highest-value next unit.
+3. **§3 β-escalation — FAILED GATE, and the failure is the finding.** Intraday
+   β is unidentifiable (pervasive collapse); selection freezes β (H_β=∞), at
+   which point β+μ ≡ μ-only. fold-6 not admissibly neutralized.
+4. **§1 Unit K verification.** The net-Sharpe ≈ 2× improvement **reproduces**,
+   but the mechanism is partly mis-stated (edge is downside-tail compression,
+   not capture; not sourced from frozen's stuck trades — overlap 0.23%) and
+   2/4 reviewer predictions are NOT MET.
+5. **§4 coint-stability gate.** Machinery correct + tested; at the default it
+   gates 19/19 (NSE spreads are marginally stationary) — uncalibratable on
+   n=2, `[TODO]`-pending-breadth.
+6. **§5 Johansen.** Correct + order-independent; selects 41 vs EG-FDR 13, but
+   the gap is **multiple-testing, not the estimator** — a separate,
+   non-comparable universe, not merged.
 
-- **§1 Unit K:** improvement reproduces; mechanism partly mis-stated; 2/4
-  reviewer predictions NOT MET; rests on n=2.
-- **§§2–6:** [TODO compute] — see each section.
+**Overall:** the adaptive-equilibrium edge is real on the matched NSE universe
+and is the *only* engine to survive deflation — but it is **indicative, n=2,
+and mechanism-qualified**, and the natural validation venue (crypto) shows the
+*naive* engine fails there. The next unit is the adaptive engines on crypto,
+where the DSR/PBO are already trustworthy.
