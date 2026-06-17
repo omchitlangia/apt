@@ -495,7 +495,64 @@ trusted. The NSE binding result is therefore marked `[TODO]`.
 
 ## Section 5 — Johansen pair selection (NSE)
 
-*(populated by §5 driver)* [TODO compute]
+> **CONFOUND — READ FIRST.** Johansen selects a **different universe** than
+> EG+BH-FDR. Its 41 pairs are **NOT comparable** to the EG-FDR 13 pairs, and
+> neither is comparable to the Phase-3 intraday-traded **2** survivors (which
+> additionally passed HL-band, liquidity and intraday gates). **No Johansen
+> pair is merged into any matched table.** This section reports the *selection*
+> universe difference only — there is no backtest here.
+
+Engine `apt.stats.johansen` (order-independent trace test; 4 unit tests
+incl. order-independence). Driver `scripts/phase4/s5_johansen.py` runs Johansen
+**and** a fresh EG+BH-FDR pass on the **same 234** correlation-screened
+candidate pairs over a common 1008-day window, so the comparison is
+apples-to-apples. Source:
+[`comparison_summary.csv`](../reports/phase4/johansen/comparison_summary.csv),
+[`johansen_selection.csv`](../reports/phase4/johansen/johansen_selection.csv);
+figure [`eg_vs_johansen.png`](../plots/phase4/johansen/eg_vs_johansen.png).
+
+### 5a/5b — selection comparison
+
+| quantity | value |
+|----------|------:|
+| candidates tested | 234 |
+| EG raw p<0.05 | 50 |
+| **EG + BH-FDR** | **13** |
+| **Johansen 95%** | **41** |
+| both (Johansen ∩ EG-FDR) | 13 |
+| **Johansen-only (NEW)** | **28** |
+| EG-FDR-only (lost) | 0 |
+| Jaccard(EG-FDR, Johansen) | 0.32 |
+| fresh-EG vs persisted FDR agreement | **0.991** |
+
+Two clean readings:
+
+1. **The setup is validated.** My fresh EG+BH-FDR reproduces the *persisted*
+   `cointegrated_pairs.parquet` FDR selection at **99.1%** agreement — so the
+   apples-to-apples comparison is sound.
+2. **Johansen ⊋ EG-FDR here, but the gap is mostly the FDR correction, not
+   the test.** Johansen-95% (41) selects a strict superset of EG-FDR (13) —
+   28 new pairs, 0 lost. But Johansen's 41 sits right next to **EG raw
+   p<0.05 (50)** and far above **EG+BH-FDR (13)**: the expansion is
+   overwhelmingly because the Johansen path carries **no multiple-testing
+   correction**, not because order-independence finds structurally different
+   pairs. Most of the 28 "new" pairs have EG single-test p ≈ 0.005–0.014
+   (individually significant) that BH-FDR rejected. Example new pairs:
+   HDFC/HDFCBANK, BAJFINANCE/HDFCBANK, CIPLA/LUPIN, HINDALCO/NMDC,
+   LUPIN/SUNPHARMA (`johansen_selection.csv`).
+
+### 5 — verdict
+
+Johansen is a **correct, order-independent** selection path (tested), and on
+this universe it would roughly **triple** the selected pair count vs EG+BH-FDR
+(41 vs 13). **But the honest attribution is multiple-testing, not the
+estimator:** apply an FDR-equivalent control to Johansen and the universes
+would largely re-converge. The 28 new pairs are unvalidated candidates — not
+FDR-corrected, not HL/liquidity/intraday-gated — so they are reported as a
+**separate, non-comparable** universe and explicitly **not** carried into any
+performance table. A genuine Johansen-vs-EG *performance* comparison would
+require re-running the entire downstream pipeline on the Johansen universe
+with matched corrections — out of scope this run (`[TODO scope]`).
 
 ## Section 6 — Crypto port (scaffold + first results)
 
