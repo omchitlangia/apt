@@ -364,7 +364,7 @@ def title_page(doc):
 
     line("Authors:", "Om Chitlangia · Manan Raina Kumar")
     line("Supervisors:", "Dr. Barik · Dr. Malu")
-    line("Institution / Department:", "[TODO — fill before submission]", value_bold=False)
+    line("Institution:", "AI Center of Excellence · Shiv Nadar Institution of Eminence")
     line("Date:", "June 2026")
 
     for _ in range(2):
